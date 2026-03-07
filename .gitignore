@@ -99,3 +99,17 @@ TASK.md
 *_private_key.pem
 *_secret_key.txt
 worker_token.txt
+
+# Runtime and generated artifacts
+.run/
+backend/data/chat_history/
+backend/data/uploads/
+data/uploads/
+backend/data/rulesets_test_*/
+backend/backend/data/
+frontend/.next.bak_*/
+frontend/.next.old.*/
+frontend/tmp_missing
+DM.md
+OPERATOR_LOG.md
+=3.6
