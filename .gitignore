@@ -28,9 +28,20 @@ env/
 .venv
 
 # Environment Variables
+# Ignore real env files in any subdirectory.
 .env
+**/.env
+.env.*
+**/.env.*
 .env.local
+**/.env.local
 .env.*.local
+**/.env.*.local
+
+# Allow checked-in templates/examples.
+!.env.example
+!**/.env.example
+!**/.env.*.example
 
 # Local Configuration
 agents.yaml
