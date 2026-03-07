@@ -2,6 +2,8 @@
 
 import React, { useCallback, useEffect, useState } from 'react';
 import { useParams, useRouter } from 'next/navigation';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import api from '@/lib/axios-config';
 
 type RunStatus = 'IDLE' | 'RUNNING' | 'DONE' | 'FAILED';
@@ -31,11 +33,12 @@ export default function ExecutionPage() {
   const [result, setResult] = useState<Record<string, unknown> | null>(null);
   const [loadingLatest, setLoadingLatest] = useState(false);
   const [runCount, setRunCount] = useState(0);
+  const [markdownPreview, setMarkdownPreview] = useState<{ artifactType: ArtifactType; content: string } | null>(null);
 
   const hasArtifacts =
     status !== 'RUNNING' &&
     status !== 'FAILED' &&
-    Boolean(result) &&
+    result != null &&
     typeof result.artifacts === 'object' &&
     result.artifacts !== null;
   const canOpenArtifacts = Boolean(hasArtifacts);
@@ -109,8 +112,22 @@ export default function ExecutionPage() {
     }
   };
 
-  const openArtifact = (artifactType: ArtifactType, format: ArtifactFormat) => {
+  const openArtifact = async (artifactType: ArtifactType, format: ArtifactFormat) => {
     if (!projectId) return;
+    if (format === 'markdown') {
+      try {
+        const res = await api.get(`/projects/${projectId}/artifacts/${artifactType}`, {
+          params: { format: 'markdown' },
+          responseType: 'text',
+        });
+        const raw = typeof res.data === 'string' ? res.data : String(res.data ?? '');
+        const normalized = raw.includes('\\n') && !raw.includes('\n') ? raw.replace(/\\n/g, '\n') : raw;
+        setMarkdownPreview({ artifactType, content: normalized });
+      } catch (e) {
+        setError('Failed to load markdown artifact');
+      }
+      return;
+    }
     const url = buildArtifactUrl(artifactType, format);
     window.open(url, '_blank');
   };
@@ -241,6 +258,19 @@ export default function ExecutionPage() {
               {result ? JSON.stringify(result, null, 2) : 'No result yet.'}
             </pre>
           </div>
+
+          {markdownPreview && (
+            <div className="border border-zinc-800 rounded p-4 bg-zinc-950">
+              <div className="font-semibold mb-2">
+                Markdown Preview ({markdownPreview.artifactType})
+              </div>
+              <div className="text-sm whitespace-normal break-words overflow-auto max-h-[420px]">
+                <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                  {markdownPreview.content}
+                </ReactMarkdown>
+              </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

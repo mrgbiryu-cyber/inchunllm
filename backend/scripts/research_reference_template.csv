@@ -1,0 +1,9 @@
+domain,title,industry_code,tag,source_url,source_text,payload_json,is_active,parsed_confidence,need_review,source_file,page
+market_size,IT 산업 시장규모 지표(예시),IT,market_baseline,https://www.statista.com/it-market,국내외 시장규모 및 매출 성장률 추정치,"{""metric"":""시장규모"",""unit"":""억원"",""period"":""2024"",""source"":""정적기준""}",true,100,false,,1
+market_size,국내 SW 서비스시장 규모(예시),IT,market_overview,https://www.k-startup.go.kr,산업별 시장규모 추정치(산출용),"{""metric"":""서비스시장"",""unit"":""억원"",""period"":""2024"",""source"":""정적기준""}",true,100,false,,1
+industry_trends,IT 산업 동향(국내),IT,trend_domestic,https://www.msit.go.kr,국내 정책/기술 동향 및 기술성숙도 동향,"{""trend_type"":""domestic"",""update_cycle"":""quarter""}",true,100,false,,1
+industry_trends,IT 산업 동향(해외),IT,trend_global,https://www.oecd.org,해외 기술/규제 변화 동향,"{""trend_type"":""global"",""update_cycle"":""quarter""}",true,100,false,,1
+competitor_info,경쟁사 분석 체크리스트(IT),IT,competitor_list,https://www.analytica.com,경쟁사 기능·가격·고객 대상 비교 항목,"{""coverage"":""domestic"",""scope"":""산업 공통""}",true,100,false,,1
+competitor_info,대표 경쟁사 사례(IT),IT,competitor_examples,https://www.news.ai,경쟁사 진입장벽·차별화 포인트 정리,"{""coverage"":""cross"",""scope"":""사례""}",true,100,false,,1
+policy_support,IT 창업 정책 지원(공통),IT,policy_check,https://www.k-startup.go.kr,정책지원사업 지원 요건 및 신청 포인트,"{""support_type"":""정부지원"",""eligibility"":""기본기준""}",true,100,false,,1
+policy_support,사회적기업 인증 가이드,IT,policy_social,https://www.ministryexample.kr,인증 심사 항목·의무 충족 가이드,"{""support_type"":""인증"",""eligibility"":""중점점검""}",true,100,false,,1

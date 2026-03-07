@@ -1,0 +1,24 @@
+[Unit]
+Description=AI BizPlan Backend (FastAPI)
+StartLimitIntervalSec=60
+StartLimitBurst=5
+After=network.target
+Wants=network.target
+
+[Service]
+Type=forking
+User=root
+WorkingDirectory=/root/inchenmml/backend
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/root/inchenmml/backend/.env
+PIDFile=/root/inchenmml/logs/backend-prod.pid
+ExecStart=/bin/bash /root/inchenmml/deploy/scripts/start_backend_prod.sh
+Restart=always
+RestartSec=3
+LimitNOFILE=65535
+KillMode=control-group
+StandardOutput=append:/root/inchenmml/logs/backend-prod.log
+StandardError=append:/root/inchenmml/logs/backend-prod.log
+
+[Install]
+WantedBy=multi-user.target

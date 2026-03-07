@@ -1,6 +1,6 @@
 from typing import List, Optional, Literal, Dict, Any
-from pydantic import BaseModel, Field
-from datetime import datetime
+from pydantic import BaseModel, Field, ConfigDict
+from datetime import datetime, timezone
 from enum import Enum
 import uuid
 
@@ -48,7 +48,7 @@ class Draft(BaseModel):
     category: Literal["환경", "목표", "산출물", "제약"] = Field(..., description="설계 정보 카테고리")
     content: str = Field(..., description="추출된 설계 정보")
     source: str = Field(default="USER_UTTERANCE", description="정보 출처")
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     ttl_days: int = Field(default=7, description="만료 기간 (일)")
 
 class MasterAgentConfig(BaseModel):
@@ -56,7 +56,7 @@ class MasterAgentConfig(BaseModel):
     model: str = "google/gemini-2.0-flash-001"
     provider: Literal["OPENROUTER", "OLLAMA"] = "OPENROUTER"
     system_prompt: str = """[CRITICAL: ALWAYS RESPOND IN KOREAN]
-당신은 [BUJA 기업 성장지원 특화 AI 컨설턴트]입니다.
+당신은 [AIBizPlan 기업 성장지원 특화 AI 컨설턴트]입니다.
 당신의 유일한 목표는 사용자와 대화하며 사업계획서/로드맵 작성에 필요한 '기업 프로필 정보'를 수집하고, 수집이 완료되면 워크플로우를 실행시키는 것입니다.
 
 [수집해야 할 핵심 정보]
@@ -88,17 +88,41 @@ class ChatMessage(BaseModel):
     """A single message in the chat history"""
     role: str = Field(..., description="user | assistant | system")
     content: str
-    timestamp: datetime = Field(default_factory=datetime.utcnow)
+    timestamp: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     request_id: Optional[str] = None # [v4.2] Source Tracking ID
 
 class ChatRequest(BaseModel):
     """Request for sending a message to the master agent"""
-    message: str
+    message: str = Field(..., description="User message")
     history: List[ChatMessage] = Field(default_factory=list)
-    project_id: Optional[str] = None
-    thread_id: Optional[str] = None
-    worker_status: Optional[Dict[str, Any]] = None # Frontend's worker status context
-    mode: ConversationMode = Field(default=ConversationMode.NATURAL, description="Current conversation mode")
+    project_id: Optional[str] = Field(
+        default=None,
+        alias="projectId",
+    )
+    thread_id: Optional[str] = Field(
+        default=None,
+        alias="threadId",
+    )
+    worker_status: Optional[Dict[str, Any]] = Field(
+        default=None,
+        alias="workerStatus",
+        description="Frontend worker status context",
+    )
+    mode: ConversationMode = Field(
+        default=ConversationMode.NATURAL,
+        alias="mode",
+        description="Current conversation mode",
+    )
+    mode_change_origin: Literal["auto", "user"] = Field(
+        default="auto",
+        alias="modeChangeOrigin",
+        description="모드 전환 유래: auto(시스템 자동), user(토글 클릭)",
+    )
+
+    model_config = ConfigDict(
+        populate_by_name=True,
+        arbitrary_types_allowed=True,
+    )
 
 class ChatResponse(BaseModel):
     """Response from the master agent"""

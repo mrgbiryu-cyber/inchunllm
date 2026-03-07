@@ -18,11 +18,24 @@ from app.models.schemas import (
     RuleSet,
     RuleSetPreviewRequest,
     RuleSetCloneRequest,
+    GrowthTemplate,
+    GrowthTemplateCreate,
+    GrowthTemplateUpdate,
+    ConsultationStateResponse,
 )
 from app.api.dependencies import get_current_user
 from app.core.database import AsyncSessionLocal, UserModel
 from app.models.company import CompanyProfile
 from app.services.rules import RulesEngine, ruleset_repository
+from app.services.growth_v1_controls import (
+    create_growth_template,
+    list_growth_templates,
+    patch_growth_template,
+    activate_template,
+    deactivate_template,
+    delete_growth_template,
+    set_project_policy_version,
+)
 from sqlalchemy import select
 
 router = APIRouter()
@@ -34,7 +47,11 @@ def check_super_admin(current_user: User = Depends(get_current_user)):
     if current_user.role != UserRole.SUPER_ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Not enough permissions"
+            detail={
+                "error_code": "FORBIDDEN_ROLE",
+                "message": "SUPER_ADMIN 권한이 필요합니다.",
+                "required": "super_admin",
+            }
         )
     return current_user
 
@@ -247,9 +264,90 @@ async def preview_ruleset(
     try:
         ruleset = ruleset_repository.get(ruleset_id, version)
         engine = RulesEngine(ruleset)
-        profile = CompanyProfile(**body.profile.dict())
+        profile = CompanyProfile(**body.profile.model_dump())
         return engine.classify_profile(profile)
     except FileNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc))
     except Exception as exc:
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.get("/templates", response_model=List[GrowthTemplate])
+async def list_templates(
+    artifact_type: Optional[str] = None,
+    stage: Optional[str] = None,
+    active_only: bool = False,
+    current_user: User = Depends(check_super_admin),
+):
+    """Template catalog management for v1.0."""
+    return await list_growth_templates(artifact_type=artifact_type, stage=stage, active_only=active_only)
+
+
+@router.post("/templates", response_model=GrowthTemplate, status_code=201)
+async def create_template(
+    payload: GrowthTemplateCreate,
+    current_user: User = Depends(check_super_admin),
+):
+    """Create template catalog entry."""
+    return await create_growth_template(payload.model_dump())
+
+
+@router.patch("/templates/{template_id}", response_model=GrowthTemplate)
+async def update_template(
+    template_id: str,
+    payload: GrowthTemplateUpdate,
+    current_user: User = Depends(check_super_admin),
+):
+    """Update template catalog entry."""
+    return await patch_growth_template(template_id, payload.model_dump(exclude_unset=True))
+
+
+@router.delete("/templates/{template_id}", status_code=204)
+async def remove_template(
+    template_id: str,
+    current_user: User = Depends(check_super_admin),
+):
+    """Delete template catalog entry."""
+    await delete_growth_template(template_id)
+
+
+@router.post("/templates/{template_id}/activate", response_model=GrowthTemplate)
+async def activate_template_route(
+    template_id: str,
+    current_user: User = Depends(check_super_admin),
+):
+    """Activate template (stage+artifact type 기준 단일 활성화)."""
+    return await activate_template(template_id)
+
+
+@router.post("/templates/{template_id}/deactivate", response_model=GrowthTemplate)
+async def deactivate_template_route(
+    template_id: str,
+    current_user: User = Depends(check_super_admin),
+):
+    """Deactivate template."""
+    return await deactivate_template(template_id)
+
+
+@router.post("/projects/{project_id}/policy-version/v1", response_model=ConsultationStateResponse)
+async def migrate_project_to_v1_0(
+    project_id: str,
+    current_user: User = Depends(check_super_admin),
+):
+    """Admin migrate: force v1.0 policy for legacy project."""
+    state = await set_project_policy_version(project_id, policy_version="v1_0", consultation_mode=None)
+    return ConsultationStateResponse(
+        project_id=state.project_id,
+        policy_version=state.policy_version,
+        consultation_mode=state.consultation_mode,
+        profile_stage=state.profile_stage,
+        question_required_count=state.question_required_count,
+        question_optional_count=state.question_optional_count,
+        question_special_count=state.question_special_count,
+        question_total_count=state.question_total_count,
+        question_required_limit=state.question_required_limit,
+        question_optional_limit=state.question_optional_limit,
+        question_special_limit=state.question_special_limit,
+        plan_data_version=state.plan_data_version,
+        summary_revision=state.summary_revision,
+    )

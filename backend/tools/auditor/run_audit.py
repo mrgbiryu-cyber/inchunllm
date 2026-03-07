@@ -14,7 +14,7 @@ from typing import List, Dict, Any
 from structlog import get_logger
 from neo4j import AsyncGraphDatabase
 from sqlalchemy import select, func, case
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 # Add parent directory to path to allow imports
 # Assuming running from backend/ dir or project root
@@ -175,7 +175,7 @@ class Auditor:
     async def check_cost_001(self):
         """COST-001: Budget Threshold Audit"""
         async with AsyncSessionLocal() as session:
-            yesterday = datetime.utcnow() - timedelta(hours=24)
+            yesterday = datetime.now(timezone.utc) - timedelta(hours=24)
             
             # Aggregate stats
             q_stats = select(

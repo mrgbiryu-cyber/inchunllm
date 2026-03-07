@@ -1,6 +1,15 @@
 import uuid
 from typing import List, Dict, Any, Optional
-from pinecone import Pinecone
+try:
+    from pinecone import Pinecone
+except Exception:
+    try:
+        from pinecone_client import Pinecone
+    except Exception:
+        raise RuntimeError(
+            "Pinecone SDK import failed. Install `pinecone` (`pip install pinecone`) "
+            "or keep `pinecone-client` for legacy compatibility."
+        )
 from app.core.config import settings
 
 class PineconeClient:
@@ -64,7 +73,7 @@ class PineconeClient:
             return []
 
         # Construct filter
-        # [Task: Vector Filter Debug] In BUJA v5.0, we use 'project_id' as the isolation key for knowledge,
+        # [Task: Vector Filter Debug] In AIBizPlan v5.0, we use 'project_id' as the isolation key for knowledge,
         # but 'tenant_id' argument name is used here. We need to be careful.
         # If the caller passes project_id as tenant_id, then we are filtering by tenant_id field in Pinecone.
         # HOWEVER, in knowledge_service.py: upsert_vectors(tenant_id=project_id, ...)

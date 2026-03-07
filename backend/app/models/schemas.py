@@ -1,14 +1,21 @@
 """
-Pydantic models for BUJA Core Platform
-Defines schemas for Jobs, Users, and API requests/responses
+Pydantic models for AIBizPlan
+Defines schemas for Jobs, Users, and API requests/responses.
 """
 from typing import Optional, List, Dict, Any, Literal
-from datetime import datetime
+from datetime import datetime, timezone
 from enum import Enum
 from uuid import UUID
 
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, ConfigDict, Field, ValidationInfo, field_validator
 from .company import CompanyProfile
+
+
+POLICY_VERSION_LEGACY = "v0_legacy"
+
+
+def _utcnow() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 # ============================================
@@ -20,6 +27,12 @@ class UserRole(str, Enum):
     SUPER_ADMIN = "super_admin"
     TENANT_ADMIN = "tenant_admin"
     STANDARD_USER = "standard_user"
+
+
+class ConsultationMode(str, Enum):
+    PRELIMINARY = "예비"
+    EARLY = "초기"
+    GROWTH = "성장"
 
 
 class ProviderType(str, Enum):
@@ -85,8 +98,7 @@ class JobMetadata(BaseModel):
     request_source: Optional[str] = None
     user_context: Optional[str] = None
     
-    class Config:
-        extra = "allow" # Allow arbitrary fields like role, system_prompt
+    model_config = ConfigDict(extra="allow")  # Allow arbitrary fields like role, system_prompt
 
 
 class JobCreate(BaseModel):
@@ -107,10 +119,10 @@ class JobCreate(BaseModel):
     metadata: JobMetadata = Field(default_factory=JobMetadata)
     file_operations: List[FileOperation] = Field(default_factory=list)
     
-    @validator('repo_root', 'allowed_paths')
-    def validate_local_machine_fields(cls, v, values):
+    @field_validator("repo_root", "allowed_paths")
+    def validate_local_machine_fields(cls, v, info: ValidationInfo):
         """Ensure repo_root and allowed_paths are provided for LOCAL_MACHINE jobs"""
-        if values.get('execution_location') == ExecutionLocation.LOCAL_MACHINE:
+        if info.data.get("execution_location") == ExecutionLocation.LOCAL_MACHINE:
             if v is None:
                 raise ValueError(
                     "repo_root and allowed_paths are required for LOCAL_MACHINE execution"
@@ -157,8 +169,8 @@ class Job(BaseModel):
     git_diff_stat: Optional[str] = None
     total_changed_lines: int = 0
     
-    class Config:
-        json_schema_extra = {
+    model_config = ConfigDict(
+        json_schema_extra={
             "example": {
                 "job_id": "550e8400-e29b-41d4-a716-446655440000",
                 "tenant_id": "tenant_hyungnim",
@@ -174,9 +186,10 @@ class Job(BaseModel):
                 "repo_root": "/home/user/projects/buja",
                 "allowed_paths": ["src/", "tests/", "docs/"],
                 "steps": ["analyze", "code", "test"],
-                "priority": 7
+                "priority": 7,
             }
         }
+    )
 
 
 class JobResult(BaseModel):
@@ -221,7 +234,7 @@ class Domain(BaseModel):
     repo_root: str
     description: Optional[str] = None
     owner_id: str
-    created_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
     is_active: bool = True
     agent_config: Dict[str, Any] = Field(default_factory=dict, description="Agent configuration (model, provider, etc.)")
 
@@ -240,8 +253,7 @@ class User(BaseModel):
     quota: UserQuota = Field(default_factory=UserQuota)
     allowed_domains: List[str] = Field(default_factory=list, description="List of domain IDs this user can access")
     
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class UserInDB(User):
@@ -337,8 +349,8 @@ class RuleSet(BaseModel):
     weights: Dict[str, float] = Field(default_factory=dict)
     cutoffs: Dict[str, float] = Field(default_factory=dict)
     fallback_policy: Dict[str, Any] = Field(default_factory=dict)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
 
 
 class RuleTrace(BaseModel):
@@ -400,9 +412,9 @@ class AgentDefinition(BaseModel):
     next_agents: List[str] = Field(default_factory=list)
     enabled: bool = True
 
-    @validator('config')
-    def validate_config_by_type(cls, v, values):
-        agent_type = values.get('type')
+    @field_validator("config")
+    def validate_config_by_type(cls, v, info: ValidationInfo):
+        agent_type = info.data.get("type")
         if not agent_type or not v: # 빈 설정은 통과 (repair 모드 지원)
             return v
             
@@ -421,8 +433,7 @@ class AgentDefinition(BaseModel):
         # The master agent will handle filling these via MISSION READINESS REPORT
         return v
 
-    class Config:
-        extra = "allow"
+    model_config = ConfigDict(extra="allow")
 
 
 class ProjectAgentConfig(BaseModel):
@@ -441,9 +452,9 @@ class ChatMessageResponse(BaseModel):
     thread_id: Optional[str] = None
     project_id: Optional[str] = None
     request_id: Optional[str] = None # [v4.2] Source Tracking ID
+    metadata: Optional[Dict[str, Any]] = None
 
-    class Config:
-        from_attributes = True
+    model_config = ConfigDict(from_attributes=True)
 
 
 class ProjectCreate(BaseModel):
@@ -465,8 +476,150 @@ class Project(BaseModel):
     company_profile: Optional[CompanyProfile] = None
     tenant_id: str
     user_id: str = "system"
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
+    created_at: datetime = Field(default_factory=_utcnow)
+    updated_at: datetime = Field(default_factory=_utcnow)
     
     # Agent Config
     agent_config: Optional[ProjectAgentConfig] = None
+
+
+class QuestionAllocationRequest(BaseModel):
+    """Client-side question hint for server-side slot allocation."""
+
+    question_type: Optional[str] = None
+
+
+class QuestionAllocationResponse(BaseModel):
+    """Server-allocated question type and counters."""
+
+    project_id: str
+    policy_version: str
+    consultation_mode: str
+    requested_question_type: Optional[str] = None
+    allocated_question_type: str
+    question_required_count: int
+    question_optional_count: int
+    question_special_count: int
+    question_total_count: int
+    question_required_limit: int
+    question_optional_limit: int
+    question_special_limit: int
+    plan_data_version: int = 0
+    summary_revision: int = 0
+
+
+class GrowthTemplate(BaseModel):
+    """Growth template entity for business-plan generation."""
+
+    id: str
+    name: str
+    artifact_type: str = Field(default="business_plan")
+    stage: str
+    version: str
+    source_pdf: Optional[str] = None
+    sections_keys_ordered: List[str] = Field(default_factory=list)
+    template_body: str
+    is_active: bool = False
+    is_default: bool = False
+    created_at: Optional[datetime] = None
+    updated_at: Optional[datetime] = None
+
+
+class GrowthTemplateCreate(BaseModel):
+    """Request for growth template registration."""
+
+    name: str
+    artifact_type: str = Field(default="business_plan")
+    stage: str
+    version: str
+    source_pdf: Optional[str] = None
+    sections_keys_ordered: Optional[List[str]] = None
+    template_body: str
+    is_active: bool = False
+    is_default: bool = False
+
+
+class GrowthTemplateUpdate(BaseModel):
+    """Request for growth template patch."""
+
+    name: Optional[str] = None
+    artifact_type: Optional[str] = None
+    stage: Optional[str] = None
+    version: Optional[str] = None
+    source_pdf: Optional[str] = None
+    sections_keys_ordered: Optional[List[str]] = None
+    template_body: Optional[str] = None
+    is_active: Optional[bool] = None
+    is_default: Optional[bool] = None
+
+
+class ResearchRunRequest(BaseModel):
+    """Research input for v1.0 growth-support run."""
+
+    manual_inputs: Optional[Dict[str, Any]] = None
+    requested_domains: Optional[List[str]] = None
+    requested_sources: Optional[List[str]] = None
+    force_refresh: bool = False
+
+
+class GrowthSupportRunRequest(BaseModel):
+    """Request payload for growth-support pipeline run."""
+
+    profile: CompanyProfile
+    input_text: str = ""
+    research: Optional[ResearchRunRequest] = None
+
+
+class ArtifactApprovalState(BaseModel):
+    """Approval payload for artifact PDF gate."""
+
+    project_id: str
+    thread_id: str = ""
+    artifact_type: str
+    requirement_version: int = 0
+    key_figures_approved: bool = False
+    certification_path_approved: bool = False
+    template_selected: bool = False
+    summary_confirmed: bool = False
+    summary_revision: int = 0
+    plan_data_version: int = 0
+    current_requirement_version: int = 0
+    policy_version: str = POLICY_VERSION_LEGACY
+    missing_steps: List[str] = Field(default_factory=list)
+    missing_step_guides: List[str] = Field(default_factory=list)
+
+
+class ArtifactApprovalUpdate(BaseModel):
+    """Approve one step explicitly."""
+
+    step: Literal[
+        "key_figures_approved",
+        "certification_path_approved",
+        "template_selected",
+        "summary_confirmed",
+    ]
+    approved: bool = True
+
+
+class TemplateSelectionRequest(BaseModel):
+    """Project-level template selection."""
+
+    template_id: str
+
+
+class ConsultationStateResponse(BaseModel):
+    """Conversation state + policy version snapshot."""
+
+    project_id: str
+    policy_version: str
+    consultation_mode: str
+    profile_stage: str
+    question_required_count: int = 0
+    question_optional_count: int = 0
+    question_special_count: int = 0
+    question_total_count: int = 0
+    question_required_limit: int = 0
+    question_optional_limit: int = 0
+    question_special_limit: int = 0
+    plan_data_version: int = 0
+    summary_revision: int = 0

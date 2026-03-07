@@ -95,7 +95,12 @@ async def test_growth_support_e2e_flow(monkeypatch):
             "updated_at": "2026-01-01T00:00:00",
         }
 
-    async def fake_run_pipeline(project_id: str, profile: CompanyProfile, input_text: str = ""):
+    async def fake_run_pipeline(
+        project_id: str,
+        profile: CompanyProfile,
+        input_text: str = "",
+        research_request=None,
+    ):
         return {
             "project_id": project_id,
             "classification": {"value": "STARTUP"},
@@ -478,7 +483,12 @@ async def test_frontend_like_flow_founder_with_full_artifacts(monkeypatch):
     run_counter = {"count": 0}
     latest_payload = {}
 
-    async def fake_run_pipeline(project_id: str, profile: CompanyProfile, input_text: str = ""):
+    async def fake_run_pipeline(
+        project_id: str,
+        profile: CompanyProfile,
+        input_text: str = "",
+        research_request=None,
+    ):
         run_counter["count"] += 1
         n = run_counter["count"]
         payload = {
@@ -531,14 +541,18 @@ async def test_frontend_like_flow_founder_with_full_artifacts(monkeypatch):
             return f"<html><body>{artifact_type}</body></html>"
         if format_name == "markdown":
             return f"# {artifact_type}"
-        if format_name == "pdf":
-            return b"pdf-bytes"
-        raise KeyError(f"Format not found: {format_name}")
+            if format_name == "pdf":
+                return b"pdf-bytes"
+            raise KeyError(f"Format not found: {format_name}")
+
+    async def fake_require_pdf_approval(project_id: str, artifact_type: str = "business_plan"):
+        return None
 
     monkeypatch.setattr(projects_module, "_get_project_or_recover", fake_get_project_or_recover)
     monkeypatch.setattr(projects_module.growth_support_service, "run_pipeline", fake_run_pipeline)
     monkeypatch.setattr(projects_module.growth_support_service, "get_latest", fake_get_latest)
     monkeypatch.setattr(projects_module.growth_support_service, "get_artifact", fake_get_artifact)
+    monkeypatch.setattr(projects_module, "require_pdf_approval", fake_require_pdf_approval)
 
     app.dependency_overrides[get_current_user] = fake_user
 
@@ -630,7 +644,12 @@ async def test_admin_ruleset_activation_reflects_runtime_classification(monkeypa
             "updated_at": "2026-01-01T00:00:00",
         }
 
-    async def fake_run_pipeline(project_id: str, profile: CompanyProfile, input_text: str = ""):
+    async def fake_run_pipeline(
+        project_id: str,
+        profile: CompanyProfile,
+        input_text: str = "",
+        research_request=None,
+    ):
         classification = await classification_agent.ClassificationAgent().analyze(profile)
         return {
             "project_id": project_id,

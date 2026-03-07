@@ -32,6 +32,53 @@ async def test_growth_support_api_e2e(monkeypatch):
         }
 
     monkeypatch.setattr(projects_module, "_get_project_or_recover", fake_get_project_or_recover)
+    async def fake_run_pipeline(project_id: str, profile, input_text: str = "", research_request=None):
+        return {
+            "project_id": project_id,
+            "classification": {"value": "STARTUP"},
+            "business_plan": {"title": "BP"},
+            "matching": {"items": []},
+            "roadmap": {"yearly_plan": []},
+            "artifacts": {
+                "business_plan": {"html": "<html><body>business</body></html>", "markdown": "# business"},
+                "matching": {"html": "<html><body>matching</body></html>", "markdown": "- matching"},
+                "roadmap": {"html": "<html><body>roadmap</body></html>", "markdown": "- roadmap"},
+            },
+        }
+
+    async def fake_get_latest(project_id: str):
+        return {
+            "project_id": project_id,
+            "classification": {"value": "STARTUP"},
+            "business_plan": {"title": "BP"},
+            "matching": {"items": []},
+            "roadmap": {"yearly_plan": []},
+            "artifacts": {
+                "business_plan": {
+                    "html": "<html><body>business</body></html>",
+                    "markdown": "# business",
+                }
+            },
+        }
+
+    async def fake_get_artifact(project_id: str, artifact_type: str, format_name: str = "html"):
+        if artifact_type != "business_plan":
+            raise KeyError(f"Artifact not found: {artifact_type}")
+        if format_name == "html":
+            return "<html><body>business</body></html>"
+        if format_name == "markdown":
+            return "# business"
+        if format_name == "pdf":
+            return b"pdf-bytes"
+        raise KeyError(f"Format not found: {format_name}")
+
+    async def fake_require_pdf_approval(project_id: str, artifact_type: str = "business_plan"):
+        return None
+
+    monkeypatch.setattr(projects_module.growth_support_service, "run_pipeline", fake_run_pipeline)
+    monkeypatch.setattr(projects_module.growth_support_service, "get_latest", fake_get_latest)
+    monkeypatch.setattr(projects_module.growth_support_service, "get_artifact", fake_get_artifact)
+    monkeypatch.setattr(projects_module, "require_pdf_approval", fake_require_pdf_approval)
     app.dependency_overrides[get_current_user] = fake_user
 
     transport = ASGITransport(app=app)

@@ -61,7 +61,9 @@ async def check_neo4j():
             # 인덱스 확인
             async with neo4j_client.driver.session() as session:
                 result = await session.run("SHOW INDEXES")
-                indexes = [record["name"] for record in await result.to_list()]
+                indexes = []
+                async for record in result:
+                    indexes.append(record["name"])
                 print(f"✅ Found Indexes: {indexes}")
         else:
             print("❌ Neo4j Connectivity: Failed")

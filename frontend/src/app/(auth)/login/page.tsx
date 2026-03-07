@@ -6,6 +6,30 @@ import { useAuthStore } from '@/store/useAuthStore';
 import api from '@/lib/axios-config';
 import { Loader2 } from 'lucide-react';
 
+type JwtPayload = {
+    sub?: string;
+    username?: string;
+    tenant_id?: string;
+    role?: string;
+};
+
+const decodeJwtPayload = (token: string): JwtPayload | null => {
+    try {
+        const tokenPayload = token.split('.')[1];
+        if (!tokenPayload) return null;
+
+        const padded = tokenPayload
+            .replace(/-/g, '+')
+            .replace(/_/g, '/')
+            .padEnd(tokenPayload.length + (4 - (tokenPayload.length % 4)) % 4, '=');
+
+        const json = typeof window === 'undefined' ? null : atob(padded);
+        return json ? JSON.parse(json) : null;
+    } catch (error) {
+        return null;
+    }
+};
+
 export default function LoginPage() {
     const [username, setUsername] = useState('');
     const [password, setPassword] = useState('');
@@ -13,42 +37,75 @@ export default function LoginPage() {
     const [error, setError] = useState('');
     const router = useRouter();
     const login = useAuthStore((state) => state.login);
+    const allowedRoles = ['super_admin', 'tenant_admin', 'standard_user'];
 
-    const handleSubmit = async (e: React.FormEvent) => {
+    const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
         e.preventDefault();
         setLoading(true);
         setError('');
 
+        const formData = new FormData(e.currentTarget);
+        const rawUsername = String(formData.get('username') || '');
+        const rawPassword = String(formData.get('password') || '');
+        const normalizedUsername = rawUsername.trim();
+        const normalizedPassword = rawPassword.trim();
+        setUsername(normalizedUsername);
+        setPassword(normalizedPassword);
+
         try {
             const response = await api.post('/auth/token', {
-                username,
-                password,
+                username: normalizedUsername,
+                password: normalizedPassword,
             });
 
-            const { access_token, user } = response.data;
+            if (normalizedUsername !== username) {
+                console.log('[LOGIN] normalized username changed', {
+                    from: username,
+                    to: normalizedUsername,
+                    length: normalizedUsername.length,
+                });
+            }
 
-            // Decode token to get user info if backend doesn't return user object directly
-            // For now assuming backend returns user object or we decode it.
-            // Actually backend /token returns { access_token, token_type, expires_in }
-            // We need to fetch user info or decode token.
-            // Let's fetch user info separately or assume we can decode.
-            // For this phase, let's just store the token and a mock user or fetch /users/me if available.
-            // Backend doesn't have /users/me yet? Let's check.
-            // Auth endpoint returns token. We might need to decode it.
-            // But for now, let's just store the username.
+            const { access_token } = response.data;
+            const payload = decodeJwtPayload(access_token);
+            if (!payload) {
+                setError('로그인 토큰을 해석할 수 없습니다.');
+                return;
+            }
 
-            const mockUser = {
-                id: 'user_001', // Placeholder
-                username: username,
-                role: 'super_admin', // Placeholder, should come from token
-                tenant_id: 'tenant_default'
-            };
+            const role = (payload.role || 'standard_user').trim().toLowerCase();
+            if (!allowedRoles.includes(role)) {
+                console.error('[LOGIN] Invalid role in token', { role, payload });
+                setError(`지원되지 않는 사용자 권한입니다. (${role || 'undefined'})`);
+                return;
+            }
 
-            login(access_token, mockUser);
+            console.log('[LOGIN] JWT payload', {
+                sub: payload.sub,
+                username: payload.username || username,
+                role,
+                tenantId: payload.tenant_id || 'tenant_default',
+            });
+
+            login(access_token, {
+                id: payload.sub || username,
+                username: payload.username || username,
+                role,
+                tenant_id: payload.tenant_id || 'tenant_default',
+            });
             router.push('/chat');
         } catch (err: any) {
-            console.error('Login failed', err);
-            setError(err.response?.data?.detail || 'Login failed. Please check your credentials.');
+            console.error('[LOGIN] request failed', {
+                status: err?.response?.status,
+                data: err?.response?.data,
+                message: err?.message,
+            });
+            const detail = err?.response?.data;
+            if (err?.response?.status === 401) {
+                setError(detail?.detail || detail?.message || '아이디/비밀번호를 확인해주세요.');
+                return;
+            }
+            setError(detail?.detail || detail?.message || 'Login failed. Please check your credentials.');
         } finally {
             setLoading(false);
         }
@@ -58,7 +115,7 @@ export default function LoginPage() {
         <div className="flex min-h-screen items-center justify-center bg-zinc-950 text-zinc-50">
             <div className="w-full max-w-md space-y-8 p-8">
                 <div className="text-center">
-                    <h1 className="text-3xl font-bold tracking-tight text-blue-500">MyLLM</h1>
+                    <h1 className="text-3xl font-bold tracking-tight text-blue-500">AI BizPlan</h1>
                     <p className="mt-2 text-sm text-zinc-400">Sign in to your account</p>
                 </div>
 
@@ -75,6 +132,9 @@ export default function LoginPage() {
                                 required
                                 value={username}
                                 onChange={(e) => setUsername(e.target.value)}
+                                autoComplete="username"
+                                autoCapitalize="none"
+                                spellCheck={false}
                                 className="mt-1 block w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:text-sm"
                                 placeholder="Enter your username"
                             />
@@ -91,6 +151,7 @@ export default function LoginPage() {
                                 required
                                 value={password}
                                 onChange={(e) => setPassword(e.target.value)}
+                                autoComplete="current-password"
                                 className="mt-1 block w-full rounded-md border border-zinc-800 bg-zinc-900 px-3 py-2 text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none focus:ring-1 focus:ring-blue-500 sm:text-sm"
                                 placeholder="Enter your password"
                             />

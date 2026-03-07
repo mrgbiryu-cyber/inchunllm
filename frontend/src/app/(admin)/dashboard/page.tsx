@@ -171,10 +171,10 @@ agents:
 
 export default function AdminDashboard() {
     return (
-        <MainLayout>
-            <Suspense fallback={<div className="p-6 text-zinc-500">Loading dashboard...</div>}>
+        <Suspense fallback={<div className="p-6 text-zinc-500">Loading dashboard...</div>}>
+            <MainLayout>
                 <DashboardContent />
-            </Suspense>
-        </MainLayout>
+            </MainLayout>
+        </Suspense>
     );
 }

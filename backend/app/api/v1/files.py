@@ -25,7 +25,7 @@ from app.models.schemas import User
 from app.services.knowledge_service import knowledge_queue
 from app.services.document_parser_service import document_parser_service
 from app.core.database import _normalize_project_id, AsyncSessionLocal, MessageModel
-from datetime import datetime
+from datetime import datetime, timezone
 
 logger = get_logger(__name__)
 
@@ -178,7 +178,7 @@ async def upload_file(
                 project_id=_normalize_project_id(project_id),
                 sender_role="user", 
                 content=content_preview,
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 metadata_json={
                     "type": "file_upload",
                     "filename": file.filename,
@@ -315,7 +315,7 @@ async def upload_folder(
                     project_id=_normalize_project_id(project_id),
                     sender_role="user", 
                     content=content_preview,
-                    timestamp=datetime.utcnow(),
+                    timestamp=datetime.now(timezone.utc),
                     metadata_json={
                         "type": "file_upload",
                         "filename": file.filename,

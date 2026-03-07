@@ -6,7 +6,7 @@ Conversation Chunking Service
 import uuid
 import hashlib
 from typing import List, Dict, Any, Optional
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from structlog import get_logger
 
 from app.core.database import get_messages_from_rdb
@@ -64,11 +64,11 @@ class ConversationChunkingService:
                 "project_id": project_id,
                 "thread_id": thread_id,
                 "messages": [],
-                "last_activity": datetime.utcnow()
+                "last_activity": datetime.now(timezone.utc)
             }
         
         self.pending_chunks[key]["messages"].append(message)
-        self.pending_chunks[key]["last_activity"] = datetime.utcnow()
+        self.pending_chunks[key]["last_activity"] = datetime.now(timezone.utc)
         
         # 청킹 트리거 확인
         if await self.should_trigger_chunking(key):
@@ -94,7 +94,7 @@ class ConversationChunkingService:
         last_activity = chunk_data["last_activity"]
         
         # 조건 1: 시간 기반 (5분)
-        if (datetime.utcnow() - last_activity).total_seconds() >= 300:
+        if (datetime.now(timezone.utc) - last_activity).total_seconds() >= 300:
             logger.info("Chunking triggered by time", key=key)
             return True
         
@@ -277,8 +277,8 @@ class ConversationChunkingService:
         - 요약 텍스트
         - 토큰 정보
         """
-        start_time = messages[0].get("timestamp") if messages else datetime.utcnow()
-        end_time = messages[-1].get("timestamp") if messages else datetime.utcnow()
+        start_time = messages[0].get("timestamp") if messages else datetime.now(timezone.utc)
+        end_time = messages[-1].get("timestamp") if messages else datetime.now(timezone.utc)
         
         original_tokens = sum(len(m.get("content", "")) // 2 for m in messages)  # 간단 추정
         compression_ratio = summary_tokens.get("total_tokens", 0) / original_tokens if original_tokens > 0 else 0
@@ -371,7 +371,7 @@ class ConversationChunkingService:
                         "end_time": messages[-1].get("timestamp").isoformat() if messages else "",
                         "message_count": len(messages),
                         "source": "conversation",
-                        "created_at": datetime.utcnow().isoformat()
+                        "created_at": datetime.now(timezone.utc).isoformat()
                     }
                 }],
                 namespace="conversation"

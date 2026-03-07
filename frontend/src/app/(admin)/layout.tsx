@@ -1,17 +1,42 @@
+'use client';
+
+import { useEffect } from 'react';
+import { useRouter } from 'next/navigation';
+import { useAuthStore } from '@/store/useAuthStore';
 import React from 'react';
 import FloatingChatbot from '@/components/master/FloatingChatbot';
+
+function useAdminAuthGuard() {
+    const router = useRouter();
+    const user = useAuthStore((state) => state.user);
+    const isAuthorized = user?.role === 'super_admin' || user?.role === 'tenant_admin';
+
+    useEffect(() => {
+        if (!isAuthorized) {
+            router.replace('/chat');
+        }
+    }, [isAuthorized, router]);
+
+    return isAuthorized;
+}
 
 export default function AdminLayout({
     children,
 }: {
     children: React.ReactNode;
 }) {
+    const isAuthorized = useAdminAuthGuard();
+
+    if (!isAuthorized) {
+        return <div className="text-zinc-300 p-6">접근 권한이 없습니다. 관리자 화면으로 이동 중...</div>;
+    }
+
     return (
         <div className="flex h-screen bg-gray-900 text-white">
             {/* Sidebar Area */}
-            <div className="w-64 border-r border-gray-800">
+                <div className="w-64 border-r border-gray-800">
                 <div className="p-4 text-xl font-bold border-b border-gray-800">
-                    BUJA Admin
+                    AI BizPlan Admin
                 </div>
                 <nav className="mt-4">
                     <a href="/admin/dashboard" className="block px-4 py-2 hover:bg-gray-800">Dashboard</a>

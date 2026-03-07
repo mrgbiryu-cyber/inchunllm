@@ -15,10 +15,10 @@ interface DomainState {
 
 export const useDomainStore = create<DomainState>((set) => ({
     domains: [
-        { id: 'd1', name: 'MyLLM Project', repo_root: '/project/myllm' },
+        { id: 'd1', name: 'AIBizPlan Project', repo_root: '/project/smartbizplanning' },
         { id: 'd2', name: 'Blog Automation', repo_root: '/project/blog-saas' },
     ],
-    currentDomain: { id: 'd1', name: 'MyLLM Project', repo_root: '/project/myllm' },
+    currentDomain: { id: 'd1', name: 'AIBizPlan Project', repo_root: '/project/smartbizplanning' },
     setCurrentDomain: (domain) => set({ currentDomain: domain }),
     addDomain: (domain) => set((state) => ({ domains: [...state.domains, domain] })),
 }));

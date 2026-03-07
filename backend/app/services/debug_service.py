@@ -1,5 +1,6 @@
 import json
 import redis.asyncio as redis
+from typing import Optional
 from app.core.config import settings
 from app.schemas.debug import DebugInfo
 from structlog import get_logger

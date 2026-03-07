@@ -1,6 +1,6 @@
 """
-Configuration settings for BUJA Core Platform Backend
-Loads environment variables and provides typed configuration
+Configuration settings for AI BizPlan Backend
+Loads environment variables and provides typed configuration.
 """
 import os
 from typing import Optional
@@ -17,7 +17,8 @@ class Settings(BaseSettings):
     """Application settings loaded from environment variables"""
     
     # Application
-    APP_NAME: str = "BUJA Core Platform"
+    APP_NAME: str = "AIBizPlan"
+    APP_TAGLINE: str = "AI BizPlan / cowork AI 기반 사업계획서(인증/지원 연계)"
     APP_VERSION: str = "1.0.0"
     ENVIRONMENT: str = "development"
     DEBUG: bool = True
@@ -32,6 +33,7 @@ class Settings(BaseSettings):
         default=None,
         validation_alias=AliasChoices("DATABASE_URL", "POSTGRES_URL", "POSTGRESQL_URL"),
     )
+    DATABASE_SCHEMA: str = "buja_app"
     REDIS_URL: Optional[str] = None
     STARTUP_WITHOUT_REDIS: bool = False
     STARTUP_WITHOUT_POSTGRES: bool = False
@@ -51,6 +53,14 @@ class Settings(BaseSettings):
     # LLM Providers
     OPENROUTER_API_KEY: Optional[str] = None
     OPENROUTER_BASE_URL: str = "https://openrouter.ai/api/v1"
+    BUSINESS_PLAN_DRAFT_MODEL: str = "google/gemini-3-flash-preview"
+    BUSINESS_PLAN_POLISH_MODEL: str = "openai/gpt-5-mini"
+    BUSINESS_PLAN_FORMAT_MODEL: str = "openai/gpt-5.2"
+    BUSINESS_PLAN_FIELD_EXTRACTION_MODEL: str = "openai/gpt-5-mini"
+    BUSINESS_PLAN_DRAFT_SYSTEM_PROMPT: Optional[str] = None
+    BUSINESS_PLAN_POLISH_SYSTEM_PROMPT: Optional[str] = None
+    BUSINESS_PLAN_FORMAT_SYSTEM_PROMPT: Optional[str] = None
+    BUSINESS_PLAN_FIELD_EXTRACTION_SYSTEM_PROMPT: Optional[str] = None
     
     # Search
     TAVILY_API_KEY: Optional[str] = None

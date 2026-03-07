@@ -19,7 +19,9 @@
     "react-dom": "19.2.3",
     "react-force-graph-2d": "^1.29.0",
     "react-force-graph-3d": "^1.29.0",
+    "react-markdown": "^10.1.0",
     "reactflow": "^11.11.4",
+    "remark-gfm": "^4.0.1",
     "tailwind-merge": "^3.4.0",
     "three": "^0.169.0",
     "zustand": "^5.0.10"

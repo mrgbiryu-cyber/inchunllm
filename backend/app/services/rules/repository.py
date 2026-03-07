@@ -1,6 +1,6 @@
 ﻿import json
 from copy import deepcopy
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List
 
@@ -10,8 +10,18 @@ from app.models.schemas import RuleSet, RuleStatus
 class RulesetRepository:
     """File-backed repository for ruleset versioning."""
 
+    _DEFAULT_RULESET_PATH = Path(__file__).resolve().parents[3] / "data" / "rulesets"
+
     def __init__(self, base_path: str = "backend/data/rulesets"):
-        self.base_path = Path(base_path)
+        base = Path(base_path)
+        if base_path == "backend/data/rulesets":
+            has_candidate_ruleset = bool(list(base.glob("company-growth-default_*.json")))
+            fallback = self._DEFAULT_RULESET_PATH
+            if not has_candidate_ruleset and fallback.exists():
+                has_fallback_ruleset = bool(list(fallback.glob("company-growth-default_*.json")))
+                if has_fallback_ruleset:
+                    base = fallback
+        self.base_path = base
         self.base_path.mkdir(parents=True, exist_ok=True)
 
     def _path_for(self, ruleset_id: str, version: str) -> Path:
@@ -46,7 +56,7 @@ class RulesetRepository:
 
     def save(self, ruleset: RuleSet) -> RuleSet:
         payload = ruleset.model_dump(mode="json") if hasattr(ruleset, "model_dump") else ruleset.dict()
-        payload["updated_at"] = datetime.utcnow().isoformat()
+        payload["updated_at"] = datetime.now(timezone.utc).isoformat()
         path = self._path_for(ruleset.ruleset_id, ruleset.version)
         path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         return RuleSet(**payload)
@@ -64,8 +74,8 @@ class RulesetRepository:
         payload["version"] = new_version
         payload["status"] = RuleStatus.DRAFT.value
         payload["author"] = author
-        payload["updated_at"] = datetime.utcnow().isoformat()
-        payload["created_at"] = datetime.utcnow().isoformat()
+        payload["updated_at"] = datetime.now(timezone.utc).isoformat()
+        payload["created_at"] = datetime.now(timezone.utc).isoformat()
         return self.create(RuleSet(**payload))
 
     def get_active(self, ruleset_id: str = "company-growth-default") -> RuleSet:

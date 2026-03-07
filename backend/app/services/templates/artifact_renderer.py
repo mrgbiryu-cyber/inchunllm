@@ -11,7 +11,7 @@ def render_business_plan_html(plan: Dict[str, Any]) -> str:
     return f"""
     <html>
       <body style='font-family: Arial, sans-serif; padding:24px; line-height:1.6'>
-        <h1>{plan.get('title','Business Plan')}</h1>
+        <h1>{plan.get('title','AIBizPlan 사업계획서')}</h1>
         <p><b>Type:</b> {plan.get('company_type','')}</p>
         <p><b>Stage:</b> {plan.get('growth_stage','')}</p>
         {section_html}

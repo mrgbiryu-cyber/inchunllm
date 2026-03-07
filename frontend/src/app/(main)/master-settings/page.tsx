@@ -1,11 +1,23 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 import api from '@/lib/axios-config';
 import { Save, Bot, User, Cpu } from 'lucide-react';
 import ModelSelector from '@/components/shared/ModelSelector';
+import { useAuthStore } from '@/store/useAuthStore';
 
 export default function MasterSettingsPage() {
+    const router = useRouter();
+    const user = useAuthStore((state) => state.user);
+    const isAuthorized = user?.role === 'super_admin' || user?.role === 'tenant_admin';
+
+    useEffect(() => {
+        if (!isAuthorized) {
+            router.replace('/chat');
+        }
+    }, [isAuthorized, router]);
+
     const [config, setConfig] = useState<any>({
         model: 'google/gemini-2.0-flash-001',
         provider: 'OPENROUTER',
@@ -42,6 +54,10 @@ export default function MasterSettingsPage() {
             setSaving(false);
         }
     };
+
+    if (!isAuthorized) {
+        return <div className="p-8 text-zinc-400">접근 권한이 없습니다. 관리자 화면으로 이동 중...</div>;
+    }
 
     if (loading) return <div className="p-8 text-zinc-400">Loading settings...</div>;
 
@@ -157,4 +173,3 @@ export default function MasterSettingsPage() {
 function cn(...inputs: any[]) {
     return inputs.filter(Boolean).join(' ');
 }
-

@@ -4,9 +4,20 @@ Response Builder - v3.2
 최종 응답 생성 전담 (자동 부착 제거 포함)
 """
 import re
-from typing import List
 
 from app.models.stream_context import StreamContext
+from app.services.intent_router import (
+    PLAN_ROUTING_LEGACY,
+    PLAN_ROUTING_QUESTION_FLOW,
+    PLAN_ROUTING_TEMPLATE_SELECT,
+    PLAN_ROUTING_DRAFT_SECTIONS,
+    PLAN_ROUTING_DISAMBIGUATE,
+    PLAN_ROUTING_FREEFLOW,
+    PLAN_ROUTING_POLICY_BLOCK,
+    PLAN_READY_MESSAGES,
+    PLAN_INTENT_SUMMARY,
+    PLAN_INTENT_CORRECTION,
+)
 
 
 async def handle_function_read(ctx: StreamContext) -> StreamContext:
@@ -133,7 +144,105 @@ def response_builder(ctx: StreamContext) -> StreamContext:
     ctx.add_log("response_builder", f"Building response for intent: {ctx.primary_intent}")
     
     response_parts = []
-    
+
+    # ===== 최초 진입 문안(필수) =====
+    if ctx.is_first_login_entry:
+        response_parts.append(PLAN_READY_MESSAGES["first_login"])
+        ctx.final_response = "".join(response_parts).strip()
+        ctx.add_log("response_builder", f"Response built (first-login): {len(ctx.final_response)} chars")
+        return ctx
+
+    if ctx.is_new_room_first_entry and ctx.routing_state == PLAN_ROUTING_LEGACY:
+        response_parts.append(PLAN_READY_MESSAGES["new_room"])
+        ctx.final_response = "".join(response_parts).strip()
+        ctx.add_log("response_builder", f"Response built (new-room-first): {len(ctx.final_response)} chars")
+        return ctx
+
+    # ===== PLAN 라우팅(신규 정책) 우선 처리 =====
+    if ctx.routing_state != PLAN_ROUTING_LEGACY:
+        if ctx.routing_state == PLAN_ROUTING_QUESTION_FLOW:
+            if ctx.routing_error:
+                response_parts.append(
+                    f"{ctx.routing_error.get('message', '질문 슬롯 처리 중 오류가 발생했습니다.')}"
+                )
+                if "counters" in ctx.routing_error:
+                    response_parts.append(f"\n현재 카운터: {ctx.routing_error.get('counters', {})}")
+                if "limits" in ctx.routing_error:
+                    response_parts.append(f"\n제한값: {ctx.routing_error.get('limits', {})}")
+            else:
+                # 사용자 토글로 전환된 경우에만 모드 안내를 노출하고,
+                # 자동 전환인 경우에는 모드 안내를 생략하고 로직 메시지를 그대로 이어감.
+                mode_guide_keywords = [
+                    "현재는 상담",
+                    "현재는 [요건수집",
+                    "현재는 세부 보완",
+                ]
+                mode_guide_msgs = {
+                    PLAN_READY_MESSAGES["consult_mode"],
+                    PLAN_READY_MESSAGES["requirement_mode"],
+                    PLAN_READY_MESSAGES["assistant_mode"],
+                    PLAN_READY_MESSAGES["collect_more_before_assist"],
+                    PLAN_READY_MESSAGES["summary_need_capture"],
+                }
+                is_mode_guidance_message = (
+                    (ctx.routing_message in mode_guide_msgs)
+                    or (
+                        isinstance(ctx.routing_message, str)
+                        and any(keyword in ctx.routing_message for keyword in mode_guide_keywords)
+                    )
+                )
+
+                if ctx.mode_switch_origin == "user" and is_mode_guidance_message:
+                    response_parts.append(ctx.routing_message)
+                elif is_mode_guidance_message:
+                    # auto 모드 전환에서는 안내 메시지를 별도 출력하지 않고 실제 흐름 질문만 진행
+                    response_parts.append("")
+                else:
+                    response_parts.append(ctx.routing_message or "질문 수집을 진행할게요.")
+        elif ctx.routing_state == PLAN_ROUTING_DISAMBIGUATE:
+            response_parts.append(
+                (ctx.routing_message or "어떤 진행을 원하시나요?")
+                + "\n"
+            )
+            option_list = ctx.routing_options or [
+                "회사/아이템 정보부터 정리",
+                "어떤 템플릿이 맞는지 추천",
+                "지금까지 내용 요약/정리",
+            ]
+            for idx, option in enumerate(option_list, start=1):
+                response_parts.append(f"{idx}. {option}\n")
+        elif ctx.routing_state == PLAN_ROUTING_POLICY_BLOCK:
+            response_parts.append(ctx.routing_message or PLAN_READY_MESSAGES["consult_mode"])
+        elif ctx.routing_state == PLAN_ROUTING_TEMPLATE_SELECT:
+            response_parts.append(
+                ctx.routing_message
+                or "좋아요. 우선 회사/사업 핵심 정보를 차례대로 수집할게요.\n"
+                "매출·고객·팀 구성·지원 필요 정보부터 간단히 물어보겠습니다."
+            )
+        elif ctx.routing_state == PLAN_ROUTING_DRAFT_SECTIONS:
+            response_parts.append(
+                ctx.routing_message
+                or """지금은 초안 작성 준비 단계예요.
+지금까지 수집된 내용으로 먼저 요약 정합성만 확인한 뒤, 확인되면 바로 초안 섹션으로 진행합니다."""
+            )
+        elif ctx.routing_state == PLAN_ROUTING_FREEFLOW:
+            if ctx.plan_intent == PLAN_INTENT_SUMMARY:
+                response_parts.append(ctx.routing_message or PLAN_READY_MESSAGES["summary_prepare"])
+            elif ctx.plan_intent == PLAN_INTENT_CORRECTION:
+                response_parts.append(
+                    ctx.routing_message
+                    or "요약본 확인 후 수정 요청을 반영할 수 있어요.\n"
+                    "원하시면 '지금까지 내용 요약해줘'로 확인 후 바로 반영 단계로 진행하세요."
+                )
+            else:
+                response_parts.append(ctx.routing_message or PLAN_READY_MESSAGES["consult_mode"])
+        else:
+            response_parts.append(ctx.routing_message or "진행 상태를 확인했습니다.")
+
+        ctx.final_response = "".join(response_parts).strip()
+        ctx.add_log("response_builder", f"Response built (plan routing): {len(ctx.final_response)} chars")
+        return ctx
+
     # === NATURAL / REQUIREMENT ===
     if ctx.primary_intent in ["NATURAL", "REQUIREMENT"]:
         # [v3.2.1 FIX] NATURAL과 REQUIREMENT 모두 LLM이 응답을 생성하므로 여기서는 빈 응답

@@ -99,6 +99,59 @@ uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 
 The API will be available at: http://localhost:8000
 
+---
+
+## 🚀 Running Fullstack Locally (Backend + Frontend + Infra)
+
+### 1. Prepare env files
+
+```bash
+cp .env.example .env
+# Optional: frontend-only overrides
+cp frontend/.env.local.example frontend/.env.local 2>/dev/null || true
+```
+
+### 2. Run shared infra (Redis/Neo4j)
+
+```bash
+cd docker
+docker compose up -d redis neo4j
+cd ..
+```
+
+### 3. Start backend and frontend together
+
+```bash
+cd scripts
+bash run_fullstack.sh
+```
+
+This starts:
+
+- Redis + Neo4j (via `docker compose`)
+- backend (`uvicorn app.main:app`)
+- frontend (`next dev --hostname 0.0.0.0 --port 3000`)
+
+Stop all:
+
+```bash
+cd scripts
+bash stop_fullstack.sh
+```
+
+### 4. Health Check
+
+```bash
+cd scripts
+bash check_fullstack.sh
+```
+
+### Notes
+
+- Backend default is `http://127.0.0.1:8000` in this project template.
+- Frontend API URL is resolved by `process.env.NEXT_PUBLIC_API_URL` (`frontend/.env.local`).
+- DB is configured through shared DB URL in `DATABASE_URL` (`.env`).
+
 API Documentation: http://localhost:8000/docs
 
 ---

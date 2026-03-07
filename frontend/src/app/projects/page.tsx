@@ -104,7 +104,7 @@ export default function ProjectsPage() {
                                     </h3>
                                     <div className="text-[10px] font-mono text-zinc-600 mt-1 uppercase tracking-tighter">ID: {project.id.substring(0, 8)}...</div>
                                 </div>
-                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${project.project_type === 'SYSTEM' ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' : project.project_type === 'NEW' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
+                                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider ${project.project_type === 'EXISTING' ? 'bg-indigo-500/20 text-indigo-400 border border-indigo-500/30' : project.project_type === 'NEW' ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30' : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'
                                     }`}>
                                     {project.project_type}
                                 </span>

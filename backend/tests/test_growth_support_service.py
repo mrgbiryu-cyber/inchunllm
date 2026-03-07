@@ -2,12 +2,14 @@
 
 from app.core.database import init_db
 from app.models.company import CompanyProfile
+from app.services.growth_v1_controls import POLICY_VERSION_V1, set_project_policy_version
 from app.services.growth_support_service import GrowthSupportService
 
 
 @pytest.mark.asyncio
 async def test_growth_support_pipeline_returns_artifacts():
     await init_db()
+    await set_project_policy_version("p-test", POLICY_VERSION_V1, consultation_mode="예비")
     service = GrowthSupportService()
     profile = CompanyProfile(
         company_name="T",

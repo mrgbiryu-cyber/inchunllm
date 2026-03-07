@@ -39,7 +39,7 @@ interface GraphNode {
 
 export default function KnowledgeGraph({ projectId, requestId }: KnowledgeGraphProps) {
     const containerRef = useRef<HTMLDivElement>(null);
-    const fgRef = useRef<any>(); // [v5.0] ForceGraph reference for camera control
+    const fgRef = useRef<any>(null); // [v5.0] ForceGraph reference for camera control
     const searchParams = useSearchParams(); // [v5.0] Read URL params
     const highlightNodeId = searchParams?.get('nodeId'); // [v5.0] Auto-focus node ID
     const [dimensions, setDimensions] = useState({ width: 800, height: 600 });

@@ -13,7 +13,7 @@ import uuid
 import re
 import hashlib
 from typing import List, Dict, Any, Optional, Tuple
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from structlog import get_logger
 
 from app.core.neo4j_client import neo4j_client
@@ -37,7 +37,7 @@ class KnowledgeService:
         """
         [COST-001] Check budget usage for last 24h and toggle DEGRADED mode.
         """
-        now = datetime.utcnow()
+        now = datetime.now(timezone.utc)
         if now - self._last_degraded_check < timedelta(minutes=5):
             return self._is_degraded
 
@@ -433,7 +433,7 @@ OPTIONAL CONTEXT (Existing Knowledge Graph Snapshot)
                         "id": n_id,
                         "project_id": p_id,
                         "source_message_id": src_msg_id,
-                        "created_at": node.get("created_at") or datetime.utcnow().isoformat()
+                        "created_at": node.get("created_at") or datetime.now(timezone.utc).isoformat()
                     })
                     
                     if n_type in ['Concept', 'Requirement', 'Decision', 'Logic', 'Task']:
@@ -555,7 +555,7 @@ OPTIONAL CONTEXT (Existing Knowledge Graph Snapshot)
                             "source": "knowledge",
                             "source_message_id": source_message_id,
                             "is_cognitive": n_type in ['Concept', 'Decision', 'Requirement', 'Logic', 'Task'],
-                            "created_at": datetime.utcnow().isoformat()
+                            "created_at": datetime.now(timezone.utc).isoformat()
                         }
                     }],
                     namespace="knowledge"
@@ -720,7 +720,7 @@ CONTEXT:
                     "id": n_id,
                     "project_id": p_id,
                     "source_message_id": node.get("source_message_id") or "BATCH_" + str(uuid.uuid4())[:8],
-                    "created_at": datetime.utcnow().isoformat()
+                    "created_at": datetime.now(timezone.utc).isoformat()
                 })
                 # [KNOW-004] Boost cognitive
                 if n_type in ['Concept', 'Requirement', 'Decision', 'Logic', 'Task']:
@@ -836,7 +836,7 @@ CONTEXT:
                                     "text": embed_texts[i][:4000],  # [v4.2] Store original text (truncated)
                                     "source": "knowledge",
                                     "is_cognitive": node.get("type") in ['Concept', 'Decision', 'Requirement', 'Logic', 'Task'],
-                                    "created_at": datetime.utcnow().isoformat()
+                                    "created_at": datetime.now(timezone.utc).isoformat()
                                 }
                             })
                     
@@ -896,7 +896,7 @@ async def knowledge_worker():
                         else:
                             if p_id not in pending_batch: pending_batch[p_id] = []
                             pending_batch[p_id].append(message_id)
-                            last_activity[p_id] = datetime.utcnow()
+                            last_activity[p_id] = datetime.now(timezone.utc)
                             
                             # [v5.0 DEBUG] Process immediately if batch size >= 2 (for faster testing)
                             if len(pending_batch[p_id]) >= 2:
@@ -908,7 +908,7 @@ async def knowledge_worker():
                 knowledge_queue.task_done()
             except asyncio.TimeoutError:
                 # 9.2.2 Inactivity Check (30 seconds)
-                now = datetime.utcnow()
+                now = datetime.now(timezone.utc)
                 for p_id in list(pending_batch.keys()):
                     if (now - last_activity.get(p_id, now)).total_seconds() >= settings.BATCH_INTERVAL_SEC:
                         m_ids = pending_batch.pop(p_id)

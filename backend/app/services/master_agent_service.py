@@ -624,7 +624,7 @@ class MasterAgentService:
         Returns:
             {"verified": True/False, "reason": "...", "mes_hash": "..."}
         """
-        from datetime import datetime
+        from datetime import datetime, timezone
         
         # [Guardrail 조건 1] confirm_token == 명시적 토큰 (단순 긍정 ❌)
         CONFIRM_TOKENS = ["실행 확정", "변경 확정", "START TASK 실행"]
@@ -681,7 +681,7 @@ class MasterAgentService:
         mes_hash = self._get_mes_hash(project)
         self.verification_state["is_verified"] = True
         self.verification_state["mes_hash"] = mes_hash
-        self.verification_state["last_db_check"] = datetime.utcnow()
+        self.verification_state["last_db_check"] = datetime.now(timezone.utc)
         self.verification_state["db_check_result"] = project
         self.verification_state["confirm_token"] = confirm_token
         self.verification_state["project_id"] = project_id

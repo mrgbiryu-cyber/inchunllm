@@ -79,7 +79,8 @@ async def chat_stream(
                 worker_status=request.worker_status,
                 request_id=request_id,  # [v4.2]
                 is_admin=is_admin,      # [v4.2]
-                mode=request.mode       # [v4.0]
+                mode=request.mode,      # [v4.0]
+                mode_change_origin=request.mode_change_origin,
             ):
                 # Send as simple text chunks or JSON if needed. 
                 # For basic streaming, we send raw text.
@@ -105,7 +106,14 @@ async def get_chat_debug(
     """
     # 1. Admin 권한 체크 (서버 사이드)
     if current_user.role != "super_admin":
-        raise HTTPException(status_code=403, detail="Forbidden: Admin access required")
+        raise HTTPException(
+            status_code=403,
+            detail={
+                "error_code": "FORBIDDEN_ROLE",
+                "message": "관리자 권한이 필요합니다.",
+                "required": "super_admin",
+            },
+        )
     
     # 2. Debug Info 조회
     debug_info = await debug_service.get_debug_info(request_id)

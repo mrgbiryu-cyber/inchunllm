@@ -5,9 +5,10 @@ StreamContext - v3.2 통합 컨텍스트 객체
 """
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional
-from datetime import datetime
+from datetime import datetime, timezone
 from app.schemas.debug import DebugInfo  # [v4.2]
 from app.models.master import ConversationMode # [v4.0]
+from app.models.master import ChatMessage
 
 @dataclass
 class StreamContext:
@@ -20,6 +21,7 @@ class StreamContext:
     thread_id: Optional[str]
     user_id: Optional[str]
     user_input_raw: str  # 원본 입력
+    history: List[ChatMessage] = field(default_factory=list)  # 이전 대화 이력 (최근 라우팅 추적용)
     
     # === [v4.2] 검증/감사 메타데이터 ===
     request_id: str = ""  # 요청 추적 ID (UUID)
@@ -31,6 +33,7 @@ class StreamContext:
     # === [v4.0] Conversation Mode ===
     mode: ConversationMode = ConversationMode.NATURAL  # 현재 대화 모드
     mode_switched: bool = False  # 모드 전환 발생 여부
+    mode_switch_origin: str = "auto"  # auto | user
     
     # === Intent 분류 결과 ===
     llm_intent: Optional[str] = None  # LLM이 추론한 Intent (있으면)
@@ -66,8 +69,27 @@ class StreamContext:
     response_parts: List[str] = field(default_factory=list)  # 응답 조각들
     final_response: str = ""  # 최종 응답 (response_builder가 생성)
     
+    # === v1.0 Plan Routing (상담 프로세스 가드) ===
+    plan_intent: Optional[str] = None  # PLAN_PROFILE_CAPTURE / PLAN_TEMPLATE_SELECT / PLAN_DRAFT_SECTIONS ...
+    plan_confidence: float = 0.0  # plan_intent confidence
+    plan_tie_delta: Optional[float] = None  # 상위 2개 점수 차이
+    need_disambiguation: bool = False  # 동률/저신뢰 시 사용자 선택 요구
+    routing_state: str = "PLAN_FREE_CHAT"  # PLAN_FREE_CHAT / PLAN_QUESTION_FLOW / PLAN_TEMPLATE_SELECT / PLAN_DRAFT_SECTIONS / PLAN_DISAMBIGUATION
+    routing_message: Optional[str] = None  # 가드 메시지/안내 텍스트
+    routing_options: List[str] = field(default_factory=list)  # 다중 선택 옵션(저신뢰 시)
+    routing_error: Optional[Dict[str, Any]] = None  # 실행 불가/카운터 초과 등
+    plan_data_version: int = 0
+    summary_revision: int = 0
+    policy_version: str = "v0_legacy"
+    consultation_mode: Optional[str] = None
+    active_template_id: Optional[str] = None
+    allocated_question_type: Optional[str] = None
+    question_counters_snapshot: Optional[Dict[str, Any]] = None
+    is_first_login_entry: bool = False
+    is_new_room_first_entry: bool = False
+
     # === 메타데이터 ===
-    timestamp: datetime = field(default_factory=datetime.utcnow)
+    timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
     step_logs: List[str] = field(default_factory=list)  # 디버깅용 Step 로그
     
     def add_log(self, step_name: str, message: str):

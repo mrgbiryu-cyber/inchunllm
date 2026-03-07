@@ -1,0 +1,23 @@
+[Unit]
+Description=AI BizPlan Frontend (Next.js)
+StartLimitIntervalSec=60
+StartLimitBurst=5
+After=network.target
+Wants=network.target
+
+[Service]
+Type=forking
+User=root
+WorkingDirectory=/root/inchenmml/frontend
+EnvironmentFile=/root/inchenmml/frontend/.env.local
+PIDFile=/root/inchenmml/logs/frontend-prod.pid
+ExecStart=/bin/bash /root/inchenmml/deploy/scripts/start_frontend_prod.sh
+Restart=always
+RestartSec=3
+KillMode=control-group
+LimitNOFILE=65535
+StandardOutput=append:/root/inchenmml/logs/frontend-prod.log
+StandardError=append:/root/inchenmml/logs/frontend-prod.log
+
+[Install]
+WantedBy=multi-user.target

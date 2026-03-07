@@ -12,6 +12,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { useProjectStore } from '@/store/projectStore';
 import api from '@/lib/axios-config';
 import { Project } from '@/types/project';
+import { useAuthStore } from '@/store/useAuthStore';
 
 export default function ProjectDetailPage() {
     const params = useParams();
@@ -19,6 +20,9 @@ export default function ProjectDetailPage() {
     const searchParams = useSearchParams();
     const projectId = params.projectId as string;
     const tab = searchParams.get('tab');
+    const user = useAuthStore((state) => state.user);
+    const isStandardUser = user?.role === 'standard_user';
+    const activeTab = isStandardUser ? 'chat' : (tab || 'chat');
 
     const [project, setProject] = useState<Project | null>(null);
     const [loading, setLoading] = useState(true);
@@ -72,7 +76,7 @@ export default function ProjectDetailPage() {
     if (!project) return <div>Project not found</div>;
 
     // Render Tab Content
-    if (tab === 'chat') {
+    if (activeTab === 'chat') {
         return (
             <div className="h-full flex flex-col">
                 <div className="flex justify-between items-center mb-4 px-4 pt-4">
@@ -88,7 +92,7 @@ export default function ProjectDetailPage() {
         );
     }
 
-    if (tab === 'graph') {
+    if (activeTab === 'graph') {
         return (
             <div className="h-full flex flex-col">
                 <div className="flex justify-between items-center mb-4 px-4 pt-4">
@@ -102,7 +106,7 @@ export default function ProjectDetailPage() {
         );
     }
 
-    if (tab === 'langgraph') {
+    if (activeTab === 'langgraph') {
         return (
             <div className="h-full flex flex-col">
                 <div className="flex justify-between items-center mb-4 px-4 pt-4">
@@ -116,7 +120,7 @@ export default function ProjectDetailPage() {
         );
     }
 
-    if (tab === 'vector') {
+    if (activeTab === 'vector') {
         return (
             <div className="h-full flex flex-col">
                 <div className="flex justify-between items-center mb-4 px-4 pt-4">
@@ -130,7 +134,7 @@ export default function ProjectDetailPage() {
         );
     }
 
-    if (tab === 'test-group') {
+    if (activeTab === 'test-group') {
         return (
             <div className="h-full flex flex-col">
                 <div className="flex justify-between items-center mb-4 px-4 pt-4">

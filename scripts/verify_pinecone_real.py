@@ -2,7 +2,7 @@ import asyncio
 import sys
 import os
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 # Adjust path
 sys.path.append(os.getcwd())
@@ -22,7 +22,7 @@ async def verify_ingestion_and_search():
     
     project_id = "system-master"
     test_msg_id = str(uuid.uuid4())
-    test_content = f"BUJA v5.0 Integrity Test: This is a verification node created at {datetime.utcnow().isoformat()}. It ensures Pinecone and Neo4j are synced."
+    test_content = f"BUJA v5.0 Integrity Test: This is a verification node created at {datetime.now(timezone.utc).isoformat()}. It ensures Pinecone and Neo4j are synced."
     
     print(f"\n[1] Ingesting Test Message (ID: {test_msg_id})...")
     
@@ -37,7 +37,7 @@ async def verify_ingestion_and_search():
             # Let's check `_normalize_project_id`.
             sender_role="user",
             content=test_content,
-            timestamp=datetime.utcnow()
+            timestamp=datetime.now(timezone.utc)
         )
         # However, for system-master, we usually pass project_id="system-master" in API, but RDB stores NULL or specific GUID?
         # Let's try to mock the `msg` object directly for `knowledge_service` without saving to RDB to avoid constraint issues if system-master GUID is tricky.
@@ -49,7 +49,7 @@ async def verify_ingestion_and_search():
         project_id = "system-master" # Force string for logic
         sender_role = "user"
         content = test_content
-        timestamp = datetime.utcnow()
+        timestamp = datetime.now(timezone.utc)
         
     msg = MockMessage()
     

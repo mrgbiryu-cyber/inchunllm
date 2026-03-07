@@ -1,0 +1,18 @@
+/root/inchenmml/logs/backend.log
+/root/inchenmml/logs/frontend.log
+/root/inchenmml/logs/backend-prod.log
+/root/inchenmml/logs/frontend-prod.log {
+  daily
+  rotate 14
+  compress
+  delaycompress
+  copytruncate
+  missingok
+  notifempty
+  create 0644 root root
+  sharedscripts
+
+  postrotate
+    /usr/bin/systemctl reload-or-restart aibizplan-backend.service aibizplan-frontend.service >/dev/null 2>&1 || true
+  endscript
+}

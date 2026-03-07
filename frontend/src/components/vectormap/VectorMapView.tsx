@@ -41,16 +41,39 @@ interface DebugInfo {
     };
 }
 
+interface VectorNode {
+    id: string;
+    name: string;
+    title?: string;
+    content?: string;
+    val?: number;
+    group?: number;
+    x?: number;
+    y?: number;
+    z?: number;
+}
+
+interface VectorLink {
+    source: string;
+    target: string;
+    [key: string]: unknown;
+}
+
+interface VectorGraphData {
+    nodes: VectorNode[];
+    links: VectorLink[];
+}
+
 interface VectorMapViewProps {
     requestId?: string;
     projectId?: string;
 }
 
 export default function VectorMapView({ requestId, projectId }: VectorMapViewProps) {
-    const fgRef = useRef<any>(); // [v5.0] ForceGraph reference for camera control
+    const fgRef = useRef<any>(null); // [v5.0] ForceGraph reference for camera control
     const searchParams = useSearchParams(); // [v5.0] Read URL params
     const highlightNodeId = searchParams?.get('nodeId'); // [v5.0] Auto-focus node ID
-    const [data, setData] = useState({ nodes: [], links: [] });
+    const [data, setData] = useState<VectorGraphData>({ nodes: [], links: [] });
     const [use2D, setUse2D] = useState(false);
     const [renderError, setRenderError] = useState<string | null>(null);
     
@@ -369,10 +392,6 @@ export default function VectorMapView({ requestId, projectId }: VectorMapViewPro
                         nodeResolution={16}
                         onNodeClick={handleNodeClick}
                         onBackgroundClick={handleBackgroundClick}
-                        onRenderError={(err: any) => {
-                            console.error("3D Render Error:", err);
-                            setRenderError(err.message || "WebGL Error");
-                        }}
                     />
                 )}
             </div>

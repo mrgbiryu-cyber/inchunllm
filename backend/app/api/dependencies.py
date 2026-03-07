@@ -14,6 +14,16 @@ from app.models.schemas import User, UserRole, TokenData
 security = HTTPBearer()
 
 
+def forbidden_role_detail(message: str, required: str | None = None) -> dict:
+    payload = {
+        "error_code": "FORBIDDEN_ROLE",
+        "message": message,
+    }
+    if required is not None:
+        payload["required"] = required
+    return payload
+
+
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ) -> User:
@@ -106,7 +116,7 @@ async def get_current_active_user(
     if not current_user.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Inactive user"
+            detail=forbidden_role_detail("비활성 사용자입니다.", "tenant_admin 또는 super_admin"),
         )
     return current_user
 
@@ -129,7 +139,7 @@ async def get_current_super_admin(
     if current_user.role != UserRole.SUPER_ADMIN:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Super admin access required"
+            detail=forbidden_role_detail("상담사 전용 권한이 필요합니다.", "super_admin"),
         )
     return current_user
 

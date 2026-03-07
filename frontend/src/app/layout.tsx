@@ -6,8 +6,8 @@ import clsx from "clsx";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "MyLLM Management System",
-  description: "AI-Powered Management Platform",
+  title: "AI BizPlan",
+  description: "cowork AI 기반 사업계획서(인증/지원 연계)",
 };
 
 export default function RootLayout({

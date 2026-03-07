@@ -13,7 +13,7 @@ if sys.stdout.encoding is None or sys.stdout.encoding.lower() != 'utf-8':
 if sys.stderr.encoding is None or sys.stderr.encoding.lower() != 'utf-8':
     sys.stderr.reconfigure(encoding='utf-8', errors='replace')
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from structlog import get_logger
 
 from app.core.config import settings
@@ -21,16 +21,39 @@ from app.core.security import verify_password, create_access_token, get_password
 from app.models.schemas import Token, LoginRequest, User, UserRole
 from app.core.database import AsyncSessionLocal, UserModel
 from sqlalchemy import select
+from app.api.dependencies import forbidden_role_detail
 
 logger = get_logger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["authentication"])
 
 @router.post("/token", response_model=Token)
-async def login(login_request: LoginRequest):
+async def login(request: Request):
     """
     Login endpoint - Returns JWT access token
     """
+    login_request: LoginRequest | None = None
+    content_type = (request.headers.get("content-type") or "").lower()
+
+    try:
+        if "application/x-www-form-urlencoded" in content_type or "multipart/form-data" in content_type:
+            form = await request.form()
+            login_request = LoginRequest(
+                username=str(form.get("username", "")),
+                password=str(form.get("password", "")),
+            )
+        else:
+            body = await request.json()
+            login_request = LoginRequest(**(body or {}))
+    except Exception:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={
+                "error_code": "VALIDATION_ERROR",
+                "message": "username/password 입력 형식이 올바르지 않습니다.",
+            },
+        )
+
     async with AsyncSessionLocal() as session:
         result = await session.execute(select(UserModel).where(UserModel.username == login_request.username))
         user_model = result.scalar_one_or_none()
@@ -56,7 +79,7 @@ async def login(login_request: LoginRequest):
     if not user_model.is_active:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail="Inactive user"
+            detail=forbidden_role_detail("비활성 사용자입니다.", "tenant_admin 또는 super_admin"),
         )
     
     # Create access token
@@ -99,6 +122,14 @@ async def register(username: str, password: str, tenant_id: str = "tenant_hyungn
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Username already exists"
             )
+
+        try:
+            hashed_password = get_password_hash(password)
+        except ValueError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=str(exc)
+            )
         
         user_id = f"user_{username}_{uuid.uuid4().hex[:8]}"
         role = UserRole.SUPER_ADMIN if username == "admin" else UserRole.STANDARD_USER
@@ -106,7 +137,7 @@ async def register(username: str, password: str, tenant_id: str = "tenant_hyungn
         new_user = UserModel(
             id=user_id,
             username=username,
-            hashed_password=get_password_hash(password),
+            hashed_password=hashed_password,
             tenant_id=tenant_id,
             role=role.value,
             is_active=1

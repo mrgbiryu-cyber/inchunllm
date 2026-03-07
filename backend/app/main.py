@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 """
-Main FastAPI application for BUJA Core Platform Backend
+Main FastAPI application for AIBizPlan backend.
 """
 import sys
 
@@ -57,7 +57,7 @@ async def lifespan(app: FastAPI):
     """
     Lifespan context manager for startup and shutdown events
     """
-    logger.info("Starting BUJA Core Platform Backend", version=settings.APP_VERSION)
+    logger.info("Starting AIBizPlan backend", version=settings.APP_VERSION)
 
     # Initialize RDB
     try:
@@ -71,8 +71,8 @@ async def lifespan(app: FastAPI):
     allow_startup_without_redis = bool(settings.STARTUP_WITHOUT_REDIS)
     redis_url = (settings.REDIS_URL or "").strip()
 
-    if settings.ENVIRONMENT.lower() != "production" and not redis_url:
-        # Safe local fallback for development only.
+    if settings.ENVIRONMENT.lower() != "production" and not redis_url and not allow_startup_without_redis:
+        # Safe local fallback for development only when startup requires redis.
         redis_url = "redis://localhost:6379/0"
 
     if not redis_url:
@@ -147,7 +147,7 @@ def _is_loopback_endpoint(url_value: str) -> bool:
 app = FastAPI(
     title=settings.APP_NAME,
     version=settings.APP_VERSION,
-    description="Server-Centric Hybrid AI Platform - Job Dispatching Engine",
+    description=f"{settings.APP_TAGLINE}",
     lifespan=lifespan,
     default_response_class=ORJSONResponse,
 )
@@ -175,6 +175,15 @@ async def request_trace_middleware(request: Request, call_next):
 async def http_exception_handler(request: Request, exc: HTTPException):
     trace_id = getattr(request.state, "trace_id", uuid.uuid4().hex)
     detail = exc.detail
+    if isinstance(detail, dict):
+        error_code = detail.get("error_code", "HTTP_ERROR")
+        message = detail.get("message", "Request failed")
+        extra = {k: v for k, v in detail.items() if k not in {"error_code", "message"}}
+        return JSONResponse(
+            status_code=exc.status_code,
+            headers={"X-Request-Id": trace_id},
+            content=_error_payload(error_code, message, extra, trace_id),
+        )
     message = detail if isinstance(detail, str) else "Request failed"
     return JSONResponse(
         status_code=exc.status_code,
@@ -332,6 +341,12 @@ async def health_check():
 async def api_health_check():
     """API V1 health check endpoint (alias)."""
     return await health_check()
+
+
+@app.get("/api/v1/admin/health")
+async def admin_api_health_check():
+    """Admin API health endpoint for deployment checks."""
+    return {"status": "healthy", "service": "buja-admin-api", "checked_at": datetime.now(timezone.utc).isoformat()}
 
 
 if __name__ == "__main__":

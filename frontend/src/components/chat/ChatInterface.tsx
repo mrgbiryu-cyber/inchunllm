@@ -1,8 +1,10 @@
 'use client';
 
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Paperclip, FileText, Bot, User as UserIcon, Loader2, Zap, AtSign, Search, ExternalLink, FolderUp } from 'lucide-react';
+import { Send, Paperclip, FileText, Bot, User as UserIcon, Loader2, Zap, AtSign } from 'lucide-react';
 import { useRouter } from 'next/navigation'; // [v4.2] Use Next.js router for proper state sync
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import api from '@/lib/axios-config';
 import LogConsole from '@/components/chat/LogConsole';
 import { useDomainStore } from '@/store/useDomainStore';
@@ -13,19 +15,370 @@ interface Message {
     id: string;
     role: 'user' | 'assistant' | 'system';
     content: string;
+    progressSteps?: string[];
+    isStreaming?: boolean;
     hasLogs?: boolean;
     timestamp?: string;
     thread_id?: string;
     request_id?: string; // [v4.2] 검증용 Request ID
+    disambiguateOptions?: string[];
+    artifactActions?: {
+        artifactType: string;
+        htmlUrl?: string;
+        pdfUrl?: string;
+        approvalUrl?: string;
+        completedSteps?: number;
+        totalSteps?: number;
+        missingSteps?: string[];
+        missingStepGuides?: string[];
+        missingFieldGuides?: string[];
+    };
 }
 
 // [v4.0] Conversation Modes
 type ConversationMode = 'NATURAL' | 'REQUIREMENT' | 'FUNCTION';
 
 const MODE_CONFIG = {
-    NATURAL: { label: '자유대화', color: 'indigo', border: 'border-indigo-500', bg: 'bg-indigo-500', text: 'text-indigo-500' },
-    REQUIREMENT: { label: '기획대화', color: 'emerald', border: 'border-emerald-500', bg: 'bg-emerald-500', text: 'text-emerald-500' },
-    FUNCTION: { label: '기능대화', color: 'violet', border: 'border-violet-500', bg: 'bg-violet-500', text: 'text-violet-500' },
+    NATURAL: { label: '상담 모드', color: 'indigo', border: 'border-indigo-500', bg: 'bg-indigo-500', text: 'text-indigo-500' },
+    REQUIREMENT: { label: '요건 수집', color: 'emerald', border: 'border-emerald-500', bg: 'bg-emerald-500', text: 'text-emerald-500' },
+    FUNCTION: { label: '도우미', color: 'violet', border: 'border-violet-500', bg: 'bg-violet-500', text: 'text-violet-500' },
+};
+
+const stripSignalPayload = (content: string): string => {
+    return content
+        .replace(/\{[\s\S]*?"status"\s*:\s*"READY_TO_START"[\s\S]*?\}/g, '')
+        .replace(/\{[\s\S]*?"type"\s*:\s*"DISAMBIGUATE_OPTIONS"[\s\S]*?\}/g, '')
+        .replace(/\{[\s\S]*?"type"\s*:\s*"ARTIFACT_ACTIONS"[\s\S]*?\}/g, '')
+        .replace(/\{[\s\S]*?"type"\s*:\s*"PIPELINE_PROGRESS"[\s\S]*?\}/g, '')
+        .replace(/\{[\s\S]*?"type"\s*:\s*"MODE_SWITCH"[\s\S]*?\}/g, '')
+        .trim();
+};
+
+type StreamSignal =
+    | { type: 'PIPELINE_PROGRESS'; message: string }
+    | { type: 'MODE_SWITCH'; mode: ConversationMode }
+    | { type: 'DISAMBIGUATE_OPTIONS'; options: string[] }
+    | {
+        type: 'ARTIFACT_ACTIONS';
+        artifact_type: string;
+        html_url?: string;
+        pdf_url?: string;
+        approval_url?: string;
+        completed_steps?: number;
+        total_steps?: number;
+        missing_steps?: string[];
+        missing_step_guides?: string[];
+        missing_field_guides?: string[];
+    }
+    | { type: 'READY_TO_START'; final_summary: string };
+
+const isConversationMode = (value: unknown): value is ConversationMode =>
+    value === 'NATURAL' || value === 'REQUIREMENT' || value === 'FUNCTION';
+
+const findJsonObjectEnd = (input: string, startIndex: number): number => {
+    let depth = 0;
+    let inString = false;
+    let escaped = false;
+
+    for (let i = startIndex; i < input.length; i += 1) {
+        const char = input[i];
+
+        if (inString) {
+            if (escaped) {
+                escaped = false;
+                continue;
+            }
+            if (char === '\\') {
+                escaped = true;
+                continue;
+            }
+            if (char === '"') {
+                inString = false;
+            }
+            continue;
+        }
+
+        if (char === '"') {
+            inString = true;
+            continue;
+        }
+
+        if (char === '{') {
+            depth += 1;
+            continue;
+        }
+
+        if (char === '}') {
+            depth -= 1;
+            if (depth === 0) {
+                return i;
+            }
+        }
+    }
+
+    return -1;
+};
+
+const parseStreamSignal = (raw: unknown): StreamSignal | null => {
+    if (!raw || typeof raw !== 'object') return null;
+    const obj = raw as Record<string, unknown>;
+    const rawType = typeof obj.type === 'string' ? obj.type : undefined;
+
+    if (rawType === 'PIPELINE_PROGRESS' && typeof obj.message === 'string') {
+        return { type: 'PIPELINE_PROGRESS', message: obj.message };
+    }
+    if (rawType === 'MODE_SWITCH' && isConversationMode(obj.mode)) {
+        return { type: 'MODE_SWITCH', mode: obj.mode };
+    }
+    if (rawType === 'DISAMBIGUATE_OPTIONS' && Array.isArray(obj.options)) {
+        return {
+            type: 'DISAMBIGUATE_OPTIONS',
+            options: obj.options.map((item) => String(item)),
+        };
+    }
+    if (rawType === 'ARTIFACT_ACTIONS') {
+        return {
+            type: 'ARTIFACT_ACTIONS',
+            artifact_type: String(obj.artifact_type || ''),
+            html_url: typeof obj.html_url === 'string' ? obj.html_url : undefined,
+            pdf_url: typeof obj.pdf_url === 'string' ? obj.pdf_url : undefined,
+            approval_url: typeof obj.approval_url === 'string' ? obj.approval_url : undefined,
+            completed_steps: typeof obj.completed_steps === 'number' ? obj.completed_steps : undefined,
+            total_steps: typeof obj.total_steps === 'number' ? obj.total_steps : undefined,
+            missing_steps: Array.isArray(obj.missing_steps) ? obj.missing_steps.map((item) => String(item)) : [],
+            missing_step_guides: Array.isArray(obj.missing_step_guides) ? obj.missing_step_guides.map((item) => String(item)) : [],
+            missing_field_guides: Array.isArray(obj.missing_field_guides) ? obj.missing_field_guides.map((item) => String(item)) : [],
+        };
+    }
+    if (obj.status === 'READY_TO_START') {
+        return {
+            type: 'READY_TO_START',
+            final_summary: typeof obj.final_summary === 'string' ? obj.final_summary : '',
+        };
+    }
+
+    return null;
+};
+
+const extractSignalsFromBuffer = (buffer: string): { text: string; carry: string; signals: StreamSignal[] } => {
+    let cursor = 0;
+    let lastConsumed = 0;
+    let text = '';
+    const signals: StreamSignal[] = [];
+
+    while (cursor < buffer.length) {
+        const openIndex = buffer.indexOf('{', cursor);
+        if (openIndex === -1) break;
+
+        text += buffer.slice(lastConsumed, openIndex);
+        const lookahead = buffer.slice(openIndex, Math.min(buffer.length, openIndex + 120));
+        const isLikelySignal = lookahead.includes('"type"') || lookahead.includes('"status"');
+        if (!isLikelySignal) {
+            text += '{';
+            cursor = openIndex + 1;
+            lastConsumed = cursor;
+            continue;
+        }
+
+        const closeIndex = findJsonObjectEnd(buffer, openIndex);
+        if (closeIndex === -1) {
+            return { text, carry: buffer.slice(openIndex), signals };
+        }
+
+        const candidate = buffer.slice(openIndex, closeIndex + 1);
+        try {
+            const parsed = JSON.parse(candidate);
+            const signal = parseStreamSignal(parsed);
+            if (signal) {
+                signals.push(signal);
+            } else {
+                text += candidate;
+            }
+        } catch {
+            text += candidate;
+        }
+
+        cursor = closeIndex + 1;
+        lastConsumed = cursor;
+    }
+
+    text += buffer.slice(lastConsumed);
+    return { text, carry: '', signals };
+};
+
+const getProgressPercent = (steps?: string[]) => {
+    const count = Array.isArray(steps) ? steps.length : 0;
+    if (count <= 0) return 15;
+    return Math.min(95, 15 + count * 20);
+};
+
+const APPROVAL_STEP_LABELS: Record<string, string> = {
+    key_figures_approved: '핵심 수치 확인',
+    certification_path_approved: '인증 방향 확인',
+    template_selected: '템플릿 선택 확인',
+    summary_confirmed: '요약본 확인',
+};
+
+const APPROVAL_STEP_GUIDES: Record<string, string> = {
+    key_figures_approved: '매출/비용/자금 최신값을 알려주세요.',
+    certification_path_approved: '인증/지원 방향(충족·미충족·추가확인)을 알려주세요.',
+    template_selected: '원하는 양식(템플릿)을 알려주세요.',
+    summary_confirmed: '요약본 내용을 확인해 주세요. 맞으면 확정, 아니면 수정 요청해 주세요.',
+};
+
+const renderMarkdownMessageContent = (content: string): React.ReactNode => {
+    const sanitized = stripSignalPayload(content || '');
+    if (!sanitized) return null;
+    const normalized = sanitized.includes('\\n') && !sanitized.includes('\n')
+        ? sanitized.replace(/\\n/g, '\n')
+        : sanitized;
+
+    return (
+        <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+                a: ({ ...props }) => (
+                    <a
+                        {...props}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-indigo-400 underline underline-offset-2 hover:text-indigo-300"
+                    />
+                ),
+                table: ({ ...props }) => (
+                    <table {...props} className="mt-2 mb-2 w-full border-collapse text-xs" />
+                ),
+                thead: ({ ...props }) => (
+                    <thead {...props} className="bg-zinc-800/60" />
+                ),
+                th: ({ ...props }) => (
+                    <th {...props} className="border border-zinc-700 px-2 py-1 text-left font-semibold text-zinc-200" />
+                ),
+                td: ({ ...props }) => (
+                    <td {...props} className="border border-zinc-700 px-2 py-1 align-top text-zinc-300" />
+                ),
+                p: ({ ...props }) => (
+                    <p {...props} className="mb-2 last:mb-0" />
+                ),
+                ul: ({ ...props }) => (
+                    <ul {...props} className="list-disc pl-4 mb-2 last:mb-0" />
+                ),
+                ol: ({ ...props }) => (
+                    <ol {...props} className="list-decimal pl-4 mb-2 last:mb-0" />
+                ),
+            }}
+        >
+            {normalized}
+        </ReactMarkdown>
+    );
+};
+
+const KEY_FIGURES_AUTO_APPROVAL_HINTS = [
+    '매출',
+    '비용',
+    '자금',
+    '투자',
+    '손익',
+    '영업이익',
+    '자금조달',
+];
+
+const CERTIFICATION_AUTO_APPROVAL_HINTS = [
+    '인증',
+    '지원',
+    '충족',
+    '미충족',
+    '지재권',
+    '특허',
+    '확인',
+];
+
+const GENERIC_APPROVAL_CONFIRM_HINTS = [
+    '예',
+    '네',
+    '응',
+    '맞아',
+    '맞습니다',
+    '맞아요',
+    '확인',
+    '승인',
+    '진행',
+    '완료',
+    'ok',
+    'okay',
+    'yes',
+];
+
+const CONTINUE_RETRY_HINTS = [
+    '이어서',
+    '이어',
+    '계속',
+    'resume',
+    'retry',
+    '다시',
+];
+
+const DEFAULT_WELCOME_MESSAGES = {
+    first_login: `안녕하세요, AIBizPlan에 오신 걸 환영해요. 😊
+첫 상담이라도 전혀 부담 가지지 마세요.
+AI가 대신 판단하지 않고, 지금은 '질문 중심'으로 차분하게 도와드리는 방식이에요.
+
+처음 오신 분을 위해 가장 안전한 순서를 먼저 안내드릴게요.
+1) 회사/사업의 핵심 정보부터 정리 (회사명, 업종, 제품/서비스, 고객)
+2) 매출/운영 현황, 지원 필요사항을 단계적으로 질문
+3) 지금까지의 답변으로 적절한 사업계획서 템플릿 추천
+4) 초안 작성 → 점검/보완 → 최종 승인 후 PDF 생성
+
+지금은 긴 문장을 몰라도 괜찮아요. 한 문장씩 가볍게 입력해도 충분합니다.
+예: “회사명은 OO입니다”, “아직 잘 몰라서 천천히 설명해줘요”처럼 말씀해 주세요.
+기본적으로 저와의 대화는 저장되고 다음 단계로 자연스럽게 이어집니다.`,
+    room_ready: `이 상담방은 “새로운 상담방”으로 시작된 현재 프로젝트 전용 작업공간입니다.
+방 안에서 주고받은 내용은 해당 상담 내용으로만 이어져서 반영돼요.
+
+처음엔 복잡한 항목을 한 번에 채우지 않아도 괜찮습니다.
+알고 있는 내용부터 짧게 말해 주세요.
+예: “회사명은 …”, “우리 제품은 …”, “고객은 …”, “매출은 …”처럼 말해주세요.
+
+제가 필요할 때 필요한 질문만 드릴게요.
+중간에 “지금까지 내용 요약해줘”라고 하면 한 번에 정리해드릴 수 있어요.`,
+};
+
+const MODE_TOGGLE_MESSAGES: Record<ConversationMode, string> = {
+    NATURAL: `상담 모드로 전환했어요.
+
+공통 사용법:
+- 초보자도 바로 시작할 수 있게 한 문장씩 천천히 말해도 됩니다.
+- “무슨 내용이 필요한지 모르겠다”면 “요약해줘” 또는 “다음엔 무엇을 물어야 해?”라고 물어보세요.
+- 언제든 “지금까지 내용 요약해줘”로 지금까지 수집된 내용을 정리받을 수 있어요.
+
+현재 모드에서 하는 일:
+- 사업계획서 생성을 위한 핵심정보를 수집해요.
+  (회사/사업/고객/시장/매출/자금 등)
+- 수집된 정보 기준으로 예비/초기/성장 단계를 판단해요.
+- 적절한 템플릿 추천 근거를 만들고, 초안 작성에 필요한 다음 질문을 제시해요.
+- 모호하면 “천천히 정리” 흐름으로 진행해요.`,
+    REQUIREMENT: `요건 수집 모드로 전환했어요.
+
+공통 사용법:
+- 지원사업 신청 전, 현재 상태를 빠르게 점검하는 모드예요.
+- “요건 체크해줘”라고 한 번 말하면 체크리스트형으로 정리해줘요.
+- 증빙이 불명확한 항목은 질문을 통해 보완할 수 있어요.
+
+현재 모드에서 하는 일:
+- 지원사업 신청 요건(매출, 근로, 고용, 기간, 증빙) 충족 여부를 점검해요.
+- 누락/미흡 항목을 필수/권장으로 분류해 우선순위를 제시해요.
+- 제출용 체크포인트를 한 번에 볼 수 있게 정리해줘요.`,
+    FUNCTION: `도우미 모드로 전환했어요.
+
+공통 사용법:
+- 문장 다듬기/요약/표현 보완에 최적화된 보조 모드예요.
+- “문장 다듬어줘”, “짧게 요약해줘”, “공식 톤으로 바꿔줘”처럼 바로 요청하세요.
+- 원문은 유지하거나, 핵심만 압축하는 방식으로 편집해요.
+
+현재 모드에서 하는 일:
+- 사업계획서 문장, 문단, 항목 제목을 깔끔하게 정리해요.
+- 지원기관 제출에 맞는 표현 톤으로 바꿔줘요.
+- 표/항목 형식 문구를 보기 좋게 다듬어줘요.`,
 };
 
 interface ChatInterfaceProps {
@@ -129,9 +482,23 @@ function MessageAuditBar({ requestId, projectId, onTabChange }: { requestId: str
 }
 
 export default function ChatInterface({ projectId: propProjectId, threadId }: ChatInterfaceProps) {
-    const { currentProjectId, setCurrentProjectId, projects, setProjects } = useProjectStore();
-    const { user } = useAuthStore(); // [v4.2] Admin check
-    const projectId = propProjectId || currentProjectId;
+    const {
+        currentProjectId,
+        setCurrentProjectId,
+        projects,
+        setProjects,
+        currentThreadId: storeCurrentThreadId,
+        setCurrentThreadId: setStoreCurrentThreadId,
+    } = useProjectStore();
+    const { user } = useAuthStore(); // [v4.2] user role preserved for role-based UI labels if needed
+    const projectId = (propProjectId || currentProjectId) || undefined;
+    const isAdmin = user?.role === 'super_admin' || user?.role === 'tenant_admin';
+    const defaultThreadTitle = `${user?.username || 'user'}_talk`;
+    const resolveProjectId = (value?: string | null) => {
+        if (!value) return null;
+        return (!isAdmin && value === 'system-master') ? null : value;
+    };
+    const effectiveProjectId = isAdmin ? (projectId || 'system-master') : resolveProjectId(projectId);
 
     // [v4.2] Router for tab switching
     const router = useRouter();
@@ -145,13 +512,17 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
     const [socket, setSocket] = useState<WebSocket | null>(null);
     const fileInputRef = useRef<HTMLInputElement>(null);
     const [isUploading, setIsUploading] = useState(false);
-
-    // [v5.0] Folder Upload State
-    const [uploadProgress, setUploadProgress] = useState<{ processed: number, total: number } | null>(null);
+    const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+    const [uploadNotice, setUploadNotice] = useState<{ type: 'success' | 'error' | 'partial'; text: string } | null>(null);
+    const [contextGuardMessage, setContextGuardMessage] = useState<string | null>(null);
 
     // [v4.0] Conversation Mode State
     const [mode, setMode] = useState<ConversationMode>('NATURAL');
+    const [modeChangeOrigin, setModeChangeOrigin] = useState<'auto' | 'user'>('auto');
     const [showModeMenu, setShowModeMenu] = useState(false);
+    const getWelcomeMessage = (targetProjectId?: string) => {
+        return targetProjectId ? DEFAULT_WELCOME_MESSAGES.room_ready : DEFAULT_WELCOME_MESSAGES.first_login;
+    };
 
     // WebSocket for real-time logs
     useEffect(() => {
@@ -207,13 +578,33 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
     const [hasMore, setHasMore] = useState(true);
 
     // [Fix] Thread ID Management
-    const [currentThreadId, setCurrentThreadId] = useState<string | undefined>(threadId);
+    const [currentThreadId, setCurrentThreadId] = useState<string | undefined>(threadId || undefined);
+    const isValidThreadId = (value?: string | null): value is string => {
+        return typeof value === 'string' && value !== 'null' && value !== 'undefined' && value.trim().length > 0;
+    };
+    const resolvedThreadId = isValidThreadId(threadId) ? threadId : undefined;
+    const activeThreadId = resolvedThreadId || currentThreadId;
+    const visibleThreadId = resolvedThreadId || currentThreadId;
+    const threadFetchSeq = useRef(0);
+    const buildThreadPayloadFromMessages = (targetThreadId: string) => {
+        return messages
+            .filter((m) => m.thread_id === targetThreadId)
+            .map((m) => ({ role: m.role, content: m.content }));
+    };
 
     useEffect(() => {
-        if (threadId) {
-            setCurrentThreadId(threadId);
+        if (resolvedThreadId && resolvedThreadId !== currentThreadId) {
+            setCurrentThreadId(resolvedThreadId);
         }
-    }, [threadId]);
+        if (resolvedThreadId && resolvedThreadId !== storeCurrentThreadId) {
+            setStoreCurrentThreadId(resolvedThreadId);
+        }
+    }, [resolvedThreadId, currentThreadId, storeCurrentThreadId, setStoreCurrentThreadId]);
+
+    useEffect(() => {
+        setMode('NATURAL');
+        setModeChangeOrigin('auto');
+    }, [resolvedThreadId, projectId]);
 
     // START TASK Gate State
     const [readyToStart, setReadyToStart] = useState(false);
@@ -225,89 +616,140 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
     const [cursorPos, setCursorPos] = useState(0);
 
     const messagesEndRef = useRef<HTMLDivElement>(null);
+    const pendingRetryRef = useRef<{ threadId?: string; requestText: string } | null>(null);
     const inputRef = useRef<HTMLTextAreaElement>(null);
-    const folderInputRef = useRef<HTMLInputElement>(null); // [v5.0] Folder Upload
     const currentDomain = useDomainStore((state) => state.currentDomain);
     const activeProject = projects.find(p => p.id === projectId);
+    const provisioningRef = useRef(false);
 
-    // [v5.0] Single File Upload Handler
-    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-        if (!e.target.files || e.target.files.length === 0) return;
-        const file = e.target.files[0];
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('project_id', projectId || 'system-master');
+    // [v5.0] Multi File Upload Handler
+    const uploadSelectedFiles = async (files: File[]) => {
+        if (files.length === 0) return;
+        if (!effectiveProjectId) {
+            setUploadNotice({
+                type: 'error',
+                text: '상담방을 준비 중입니다. 잠시 후 다시 시도해 주세요.'
+            });
+            return;
+        }
 
         setIsUploading(true);
+        setUploadNotice(null);
         try {
-            const response = await api.post('/files/upload', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' }
+            const results = await Promise.allSettled(
+                files.map(async (file) => {
+                    const formData = new FormData();
+                    formData.append('file', file);
+                    formData.append('project_id', effectiveProjectId);
+                    return api.post('/files/upload', formData, {
+                        headers: { 'Content-Type': 'multipart/form-data' }
+                    }).then((response) => ({
+                        fileName: file.name,
+                        fileId: response.data?.file_id || response.data?.id || response.data?.data?.file_id
+                    }));
+                })
+            );
+
+            const uploaded = results
+                .map((r) => (r.status === 'fulfilled' ? r.value : null))
+                .filter((r): r is { fileName: string; fileId: string } => r !== null);
+            const failedCount = results.length - uploaded.length;
+
+            const summary = [
+                uploaded.length > 0 ? `첨부파일 업로드 완료: ${uploaded.length}개` : null,
+                ...uploaded.map((item) => `- ${item.fileName} (ID: ${item.fileId})`),
+                failedCount > 0 ? `업로드 실패: ${failedCount}개` : null
+            ].filter(Boolean).join('\n');
+
+            const type: 'success' | 'error' | 'partial' =
+                uploaded.length === 0 ? 'error' : (failedCount > 0 ? 'partial' : 'success');
+            setUploadNotice({
+                type,
+                text: summary || '업로드된 파일이 없습니다.'
             });
-            
-            // UI Feedback (System Message)
+
             setMessages(prev => [...prev, {
                 id: Date.now().toString(),
                 role: 'assistant',
-                content: `📎 **File Uploaded**: \`${file.name}\`\n(ID: \`${response.data.file_id}\`)`
+                content: summary || '⚠️ 첨부된 파일이 없습니다.'
             }]);
         } catch (err: any) {
             console.error("File upload failed", err);
+            setUploadNotice({
+                type: 'error',
+                text: `업로드 실패: ${err.response?.data?.detail || err.message}`
+            });
             setMessages(prev => [...prev, {
                 id: Date.now().toString(),
                 role: 'assistant',
-                content: `❌ **Upload Failed**: ${err.response?.data?.detail || err.message}`
+                content: `첨부파일 업로드 실패: ${err.response?.data?.detail || err.message}`
             }]);
         } finally {
             setIsUploading(false);
-            if (e.target) e.target.value = '';
+            setSelectedFiles([]);
+            if (fileInputRef.current) fileInputRef.current.value = '';
         }
     };
 
-    // [v5.0] Folder Upload Handler
-    const handleFolderUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const formatFileSize = (size: number) => {
+        if (size < 1024) return `${size} B`;
+        if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+        return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+    };
+
+    const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
         if (!e.target.files || e.target.files.length === 0) return;
 
         const files = Array.from(e.target.files);
-        const formData = new FormData();
-        files.forEach(file => {
-            formData.append('files', file);
-        });
-        formData.append('project_id', projectId || 'system-master');
-
-        setLoading(true);
-        setUploadProgress({ processed: 0, total: files.length });
-
-        try {
-            const response = await api.post('/files/upload-folder', formData, {
-                headers: { 'Content-Type': 'multipart/form-data' },
-                onUploadProgress: (progressEvent) => {
-                    // This tracks bytes, but we want file count which is returned by server
-                    // Ideally we could stream file status, but for MVP we wait for response
-                }
-            });
-            
-            const processed = response.data.processed || 0;
-            const total = response.data.total || files.length;
-            setUploadProgress({ processed, total });
-
-            setMessages(prev => [...prev, {
-                id: Date.now().toString(),
-                role: 'assistant', // Use assistant role to be visible and distinct
-                content: `📁 **Folder Upload Complete**\n- Total Files: ${total}\n- Processed: ${processed}\n- Status: Queued for Knowledge Ingestion`
-            }]);
-        } catch (err: any) {
-            console.error("Folder upload failed", err);
-            setMessages(prev => [...prev, {
-                id: Date.now().toString(),
-                role: 'assistant',
-                content: `❌ **Folder Upload Failed**\n${err.response?.data?.detail || err.message}`
-            }]);
-        } finally {
-            setLoading(false);
-            setTimeout(() => setUploadProgress(null), 3000); // Hide after 3s
-            if (e.target) e.target.value = ''; // Reset input
-        }
+        setSelectedFiles(files);
+        await uploadSelectedFiles(files);
     };
+
+    const pushModeGuideMessage = (nextMode: ConversationMode) => {
+        const label = MODE_CONFIG[nextMode].label;
+        const content = `【모드 전환】 ${label}\n\n${MODE_TOGGLE_MESSAGES[nextMode]}`;
+
+        setMessages((prev) => {
+            const last = prev[prev.length - 1];
+            if (last && last.role === 'assistant' && last.content === content) {
+                return prev;
+            }
+            return [
+                ...prev,
+                {
+                    id: Date.now().toString(),
+                    role: 'assistant',
+                    content,
+                    thread_id: resolvedThreadId || currentThreadId,
+                },
+            ];
+        });
+    };
+
+    const sendDisambiguateOption = async (optionText: string) => {
+        if (loading) return;
+        // 즉시 해당 선택지 메시지를 제거해 중복 클릭을 줄임
+        setMessages(prev => prev.map(msg =>
+            msg.content.includes('원하시는 흐름 하나를 골라주세요') && msg.disambiguateOptions
+                ? { ...msg, disambiguateOptions: undefined }
+                : msg
+        ));
+        await handleSend('chat', optionText);
+    };
+
+    useEffect(() => {
+        const shouldRenderWelcome = messages.length === 0 && !loading && !contextGuardMessage;
+        if (!shouldRenderWelcome) {
+            return;
+        }
+
+        setMessages([{
+            id: `welcome-${Date.now()}`,
+            role: 'assistant',
+            content: getWelcomeMessage(projectId),
+                    thread_id: resolvedThreadId || currentThreadId,
+        }]);
+    }, [messages.length, loading, projectId, activeThreadId, contextGuardMessage]);
 
     // [Fix] 메시지 목록이 바뀔 때마다 마지막 메시지에서 READY_TO_START 신호를 찾아 버튼을 복구합니다.
     useEffect(() => {
@@ -336,6 +778,135 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
         scrollToBottom();
     }, [messages]);
 
+    useEffect(() => {
+        if (isAdmin) {
+            setContextGuardMessage(null);
+            return;
+        }
+
+        if (!projectId) {
+            const hasUsableProject = projects.some(project => project.id !== 'system-master');
+            if (!hasUsableProject) {
+                if (provisioningRef.current) return;
+                provisioningRef.current = true;
+                const provisionDefaultWorkspace = async () => {
+                    try {
+                        const defaultProjectName = `${user?.username || 'user'}_talk`;
+                        const projectRes = await api.post('/projects/', {
+                            name: defaultProjectName,
+                            project_type: 'GROWTH_SUPPORT',
+                        });
+                        const createdProjectId = projectRes.data.id;
+                        setCurrentProjectId(createdProjectId);
+                        const threadRes = await api.post(`/projects/${createdProjectId}/threads`, {
+                            title: defaultProjectName
+                        });
+                        const threadIdForInit = threadRes.data.thread_id;
+                        setContextGuardMessage(null);
+                        router.replace(`/chat?projectId=${createdProjectId}&threadId=${threadIdForInit}`);
+                    } catch (err) {
+                        console.error('[ChatInterface] Failed to bootstrap default project/thread', err);
+                        setContextGuardMessage('상담 프로젝트를 준비하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+                        setCurrentProjectId(null);
+                    } finally {
+                        provisioningRef.current = false;
+                    }
+                };
+
+                provisionDefaultWorkspace();
+                return;
+            }
+
+            const fallbackProjectId = currentProjectId && currentProjectId !== 'system-master'
+                ? currentProjectId
+                : projects.find(project => project.id !== 'system-master')?.id;
+
+            if (fallbackProjectId) {
+                setCurrentProjectId(fallbackProjectId);
+                setContextGuardMessage(null);
+                if (fallbackProjectId !== currentProjectId) {
+                    router.replace(`/chat?projectId=${fallbackProjectId}`);
+                }
+            }
+
+            return;
+        }
+
+        if (projectId === 'system-master') {
+            const usableProjectId = projects.find(project => project.id !== 'system-master')?.id;
+            if (usableProjectId) {
+                setCurrentProjectId(usableProjectId);
+                router.replace(`/chat?projectId=${usableProjectId}`);
+                return;
+            }
+            setContextGuardMessage('상담방 준비 중입니다. 권한 제한 projectId는 사용할 수 없습니다.');
+            return;
+        }
+
+        setContextGuardMessage(null);
+    }, [isAdmin, projectId, projects, currentProjectId, setCurrentProjectId, router, user?.username]);
+
+    const resolveAndSetThread = async (targetProjectId: string, requestedThreadId?: string) => {
+        const normalizedRequestedThreadId = isValidThreadId(requestedThreadId) ? requestedThreadId : undefined;
+
+        // 1) 요청된 스레드 우선 확인: 존재하면 즉시 해당 스레드로 고정
+        if (normalizedRequestedThreadId) {
+            try {
+                const historyRes = await api.get(
+                    `/projects/${targetProjectId}/threads/${normalizedRequestedThreadId}/messages`,
+                    { params: { limit: 1 } }
+                );
+                if (historyRes.status === 200) {
+                    setCurrentThreadId(normalizedRequestedThreadId);
+                    if (normalizedRequestedThreadId !== storeCurrentThreadId) {
+                        setStoreCurrentThreadId(normalizedRequestedThreadId);
+                    }
+                    return normalizedRequestedThreadId;
+                }
+            } catch (error: any) {
+                if (error?.response?.status === 404) {
+                    console.warn('[ChatInterface] Requested thread not found.', normalizedRequestedThreadId);
+                } else {
+                    console.warn('[ChatInterface] Requested thread validation failed.', error);
+                }
+                // 요청 스레드가 유효하지 않으면 생성·이동하지 않고 호출부가 메시지로 처리.
+                return undefined;
+            }
+        }
+
+        try {
+            const threadsRes = await api.get(`/projects/${targetProjectId}/threads`);
+            const threadList = Array.isArray(threadsRes.data) ? threadsRes.data : [];
+            const pickedThreadId = threadList[0]?.thread_id;
+
+            if (pickedThreadId) {
+                setCurrentThreadId(pickedThreadId);
+                setStoreCurrentThreadId(pickedThreadId);
+                if (!normalizedRequestedThreadId) {
+                    router.replace(`/chat?projectId=${targetProjectId}&threadId=${pickedThreadId}`);
+                }
+                await fetchHistory(20, pickedThreadId);
+                return pickedThreadId;
+            }
+
+            const createRes = await api.post(`/projects/${targetProjectId}/threads`, {
+                title: defaultThreadTitle,
+            });
+            const newThreadId = createRes.data?.thread_id;
+            if (newThreadId) {
+                setCurrentThreadId(newThreadId);
+                setStoreCurrentThreadId(newThreadId);
+                setMessages([]);
+                router.replace(`/chat?projectId=${targetProjectId}&threadId=${newThreadId}`);
+                return newThreadId;
+            }
+        } catch (error) {
+            console.error('[ChatInterface] resolveAndSetThread failed', error);
+        }
+
+        return null;
+    };
+
     // [v5.0] State Cleanup and Initialization on Project Change
     useEffect(() => {
         const initChat = async () => {
@@ -343,73 +914,61 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
             setMessages([]);
             setLogs([]);
             setReadyToStart(false);
-            setUploadProgress(null);
             setHasMore(true);
             
+            if (!projectId || (projectId === 'system-master' && !isAdmin)) {
+                return;
+            }
+
+            const desiredThreadId = resolvedThreadId;
+
             // If projectId changed, we must ensure threadId is valid or fetch default
             if (projectId) {
-                if (!threadId) {
-                    // [CRITICAL FIX] If no threadId in URL, fetch threads and auto-select first one
-                    console.log("DEBUG: [Init] No threadId in URL, fetching threads...");
-                    try {
-                        const threadsRes = await api.get(`/projects/${projectId}/threads`);
-                        console.log("DEBUG: [Init] Threads fetched:", threadsRes.data.length);
-                        
-                        if (threadsRes.data && threadsRes.data.length > 0) {
-                            // Auto-select first thread
-                            const firstThread = threadsRes.data[0];
-                            console.log("DEBUG: [Init] Auto-selecting first thread:", firstThread.thread_id);
-                            
-                            // Update URL
-                            router.replace(`?projectId=${projectId}&threadId=${firstThread.thread_id}`);
-                            
-                            // [CRITICAL FIX] Immediately set state and fetch history
-                            setCurrentThreadId(firstThread.thread_id);
-                            setReadyToStart(false);
-                            setFinalSummary('');
-                            
-                            // Fetch history immediately
-                            console.log("DEBUG: [Init] Calling fetchHistory for thread:", firstThread.thread_id);
-                            await fetchHistory(20, firstThread.thread_id);
-                        } else {
-                            // No threads, create default
-                            console.log("DEBUG: [Init] No threads found, creating default...");
-                            try {
-                                const newThreadRes = await api.post(`/projects/${projectId}/threads`, { title: "기본 대화방" });
-                                const newThreadId = newThreadRes.data.thread_id;
-                                console.log("DEBUG: [Init] Created default thread:", newThreadId);
-                                
-                                router.replace(`?projectId=${projectId}&threadId=${newThreadId}`);
-                                setCurrentThreadId(newThreadId);
-                                // Empty history for new thread
-                                setMessages([]);
-                            } catch (createErr) {
-                                console.error("Failed to auto-create default thread", createErr);
-                            }
-                        }
-                    } catch (e) {
-                        console.warn("Failed to check threads for default redirection", e);
+                const effectiveThreadId = await resolveAndSetThread(projectId, desiredThreadId);
+                if (!effectiveThreadId) {
+                    setContextGuardMessage('요청한 상담방을 찾지 못했습니다. 상담방 목록의 최근 방으로 이동합니다.');
+                    const threadsRes = await api.get(`/projects/${projectId}/threads`);
+                    const threads = Array.isArray(threadsRes.data) ? threadsRes.data : [];
+                    const fallbackThreadId = threads?.[0]?.thread_id;
+                    if (fallbackThreadId) {
+                        setCurrentThreadId(fallbackThreadId);
+                        setStoreCurrentThreadId(fallbackThreadId);
+                        router.replace(`/chat?projectId=${projectId}&threadId=${fallbackThreadId}`);
+                        await fetchHistory(20, fallbackThreadId);
                     }
-                } else {
-                    // Have threadId, set it and fetch history
-                    console.log("DEBUG: [Init] ThreadId present in URL:", threadId);
-                    setCurrentThreadId(threadId);
-                    setReadyToStart(false);
-                    setFinalSummary('');
-                    await fetchHistory(20, threadId); // Pass threadId explicitly
+                    return;
                 }
+
+                setCurrentThreadId(effectiveThreadId);
+                setStoreCurrentThreadId(effectiveThreadId);
+                setReadyToStart(false);
+                setFinalSummary('');
+                await fetchHistory(20, effectiveThreadId);
             }
         };
         
         initChat();
-    }, [projectId, threadId]);
+    }, [projectId, resolvedThreadId, defaultThreadTitle, isAdmin]);
+
+    // Hard guard: whenever URL thread changes, force-refresh that thread history.
+    // This prevents stale in-memory state from showing previous room messages.
+    useEffect(() => {
+        if (!projectId || !resolvedThreadId) {
+            return;
+        }
+        setMessages([]);
+        setReadyToStart(false);
+        setFinalSummary('');
+        fetchHistory(20, resolvedThreadId);
+    }, [projectId, resolvedThreadId]);
 
     const fetchHistory = async (currentLimit: number, specificThreadId?: string) => {
         if (!projectId) return;
         
         // Use provided threadId or fall back to state (but state might be stale in useEffect)
         // So we prefer explicit argument
-        const targetThreadId = specificThreadId || currentThreadId;
+        const targetThreadId = specificThreadId || resolvedThreadId || currentThreadId;
+        const requestSeq = ++threadFetchSeq.current;
         
         if (!targetThreadId) {
             console.warn("Skipping fetchHistory: No threadId available");
@@ -423,24 +982,42 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
         try {
             // [Fix] Use dedicated thread message endpoint
             const response = await api.get(`/projects/${projectId}/threads/${targetThreadId}/messages`, { 
-                params: { limit: currentLimit } 
+                params: { limit: currentLimit, _ts: Date.now() },
+                headers: {
+                    "Cache-Control": "no-cache, no-store, must-revalidate",
+                    Pragma: "no-cache",
+                    Expires: "0",
+                },
             });
+
+            if (requestSeq !== threadFetchSeq.current) {
+                return;
+            }
 
             // [Audit] Log Raw Response for Data Mapping Check
             console.log("DEBUG: [History] Raw API Response:", response.data);
 
-            const historyMessages: Message[] = response.data.map((msg: any) => ({
-                id: msg.id || Math.random().toString(),
-                role: msg.role,
-                content: msg.content, // [Check] Backend sends 'content', Frontend uses 'content'. OK.
-                timestamp: msg.created_at,
-                thread_id: msg.thread_id,
-                request_id: msg.request_id // Ensure request_id is passed for audit bar
-            }));
+            const historyMessages: Message[] = response.data.map((msg: any) => {
+                const hydrated = hydrateMessageFromRaw(msg.content || '');
+                return {
+                    id: msg.id || Math.random().toString(),
+                    role: msg.role,
+                    content: hydrated.content,
+                    disambiguateOptions: hydrated.disambiguateOptions,
+                    artifactActions: hydrated.artifactActions,
+                    progressSteps: hydrated.progressSteps,
+                    timestamp: msg.created_at,
+                    thread_id: msg.thread_id,
+                    request_id: msg.request_id, // Ensure request_id is passed for audit bar
+                };
+            });
 
             setMessages(historyMessages);
             setHasMore(response.data.length === currentLimit);
         } catch (error: any) {
+            if (requestSeq !== threadFetchSeq.current) {
+                return;
+            }
             console.error("Failed to fetch chat history", error);
             if (error.response?.status === 404) {
                 console.warn("Project or Thread not found. Resetting context.");
@@ -474,6 +1051,58 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
         setShowMentions(false);
     };
 
+    const shouldRetryPreviousRequest = (inputText: string): boolean => {
+        const normalized = (inputText || '').replace(/\s+/g, '').toLowerCase();
+        if (!normalized) return false;
+        if (normalized.length > 18) return false;
+        return CONTINUE_RETRY_HINTS.some((hint) => normalized.includes(hint));
+    };
+
+    const hydrateMessageFromRaw = (rawContent: string) => {
+        const parsed = extractSignalsFromBuffer(rawContent || '');
+        const cleanedText = stripSignalPayload(parsed.text || rawContent || '');
+        let disambiguateOptions: string[] | undefined;
+        let artifactActions: Message['artifactActions'];
+        const progressSteps: string[] = [];
+
+        for (const signal of parsed.signals) {
+            if (signal.type === 'DISAMBIGUATE_OPTIONS') {
+                disambiguateOptions = signal.options;
+                continue;
+            }
+            if (signal.type === 'PIPELINE_PROGRESS') {
+                if (progressSteps[progressSteps.length - 1] !== signal.message) {
+                    progressSteps.push(signal.message);
+                }
+                continue;
+            }
+            if (signal.type === 'ARTIFACT_ACTIONS') {
+                artifactActions = {
+                    artifactType: signal.artifact_type,
+                    htmlUrl: signal.html_url,
+                    pdfUrl: signal.pdf_url,
+                    approvalUrl: signal.approval_url,
+                    completedSteps: signal.completed_steps,
+                    totalSteps: signal.total_steps,
+                    missingSteps: signal.missing_steps || [],
+                    missingStepGuides: signal.missing_step_guides || [],
+                    missingFieldGuides: signal.missing_field_guides || [],
+                };
+            }
+        }
+
+        const fallbackText = artifactActions
+            ? '초안 생성이 완료되었습니다. 아래 버튼에서 결과를 확인해 주세요.'
+            : '';
+
+        return {
+            content: cleanedText || fallbackText,
+            disambiguateOptions,
+            artifactActions,
+            progressSteps: progressSteps.length > 0 ? progressSteps : undefined,
+        };
+    };
+
     const selectProjectMention = (proj: any) => {
         const lastAtPos = input.lastIndexOf('@', cursorPos - 1);
         const newValue = input.substring(0, lastAtPos) + `@${proj.name} ` + input.substring(cursorPos);
@@ -483,11 +1112,136 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
         if (inputRef.current) inputRef.current.focus();
     };
 
-    const handleSend = async (type: 'chat' | 'job' = 'chat') => {
-        if (!input.trim() && type === 'chat') return;
-        if (loading) return;
+    const inferApprovalStepsFromInput = (inputText: string, missingSteps: string[]) => {
+        const normalized = (inputText || '').trim().toLowerCase();
+        if (!normalized) return [] as string[];
+        const steps: string[] = [];
+        const isGenericApprovalConfirm = GENERIC_APPROVAL_CONFIRM_HINTS.some((hint) => normalized.includes(hint));
 
-        const effectiveProjectId = projectId || 'system-master';
+        const hasKeyFigureSignal =
+            missingSteps.includes('key_figures_approved')
+            && KEY_FIGURES_AUTO_APPROVAL_HINTS.some((hint) => normalized.includes(hint))
+            && (/\d/.test(normalized) || /없음|미발생|적자|흑자/.test(normalized));
+        if (hasKeyFigureSignal) {
+            steps.push('key_figures_approved');
+        }
+
+        const hasCertificationSignal =
+            missingSteps.includes('certification_path_approved')
+            && CERTIFICATION_AUTO_APPROVAL_HINTS.some((hint) => normalized.includes(hint));
+        if (hasCertificationSignal) {
+            steps.push('certification_path_approved');
+        }
+
+        if (missingSteps.includes('summary_confirmed') && isGenericApprovalConfirm) {
+            steps.push('summary_confirmed');
+        }
+
+        if (missingSteps.includes('template_selected')) {
+            const hasTemplateSignal = /템플릿|양식|형식|서식/.test(normalized);
+            if (hasTemplateSignal || (isGenericApprovalConfirm && missingSteps.length === 1)) {
+                steps.push('template_selected');
+            }
+        }
+
+        if (steps.length === 0 && isGenericApprovalConfirm && missingSteps.length === 1) {
+            steps.push(missingSteps[0]);
+        }
+
+        return Array.from(new Set(steps));
+    };
+
+    const autoCompleteApprovalStepsFromInput = async (inputText: string, targetThreadId: string) => {
+        if (!projectId) return;
+        const latestArtifactMsg = [...messages].reverse().find(
+            (m) =>
+                m.role === 'assistant'
+                && (!m.thread_id || m.thread_id === targetThreadId)
+                && !!m.artifactActions
+                && Array.isArray(m.artifactActions?.missingSteps)
+                && m.artifactActions!.missingSteps!.length > 0
+        );
+        if (!latestArtifactMsg?.artifactActions?.missingSteps?.length) return;
+
+        const stepsToApprove = inferApprovalStepsFromInput(inputText, latestArtifactMsg.artifactActions.missingSteps);
+        if (stepsToApprove.length === 0) return;
+
+        const approvalParams = { threadId: targetThreadId };
+        for (const step of stepsToApprove) {
+            await api.post(
+                `/projects/${projectId}/artifacts/business_plan/approval`,
+                { step, approved: true },
+                { params: approvalParams }
+            );
+        }
+        const approvalRes = await api.get(
+            `/projects/${projectId}/artifacts/business_plan/approval`,
+            { params: approvalParams }
+        );
+        const data = approvalRes.data || {};
+
+        setMessages((prev) =>
+            prev.map((m) => {
+                if (m.id !== latestArtifactMsg.id || !m.artifactActions) return m;
+                return {
+                    ...m,
+                    artifactActions: {
+                        ...m.artifactActions,
+                        completedSteps: 4 - ((data.missing_steps || []).length || 0),
+                        totalSteps: 4,
+                        missingSteps: Array.isArray(data.missing_steps) ? data.missing_steps : [],
+                        missingStepGuides: Array.isArray(data.missing_step_guides) ? data.missing_step_guides : [],
+                    },
+                };
+            })
+        );
+
+        setMessages((prev) => [
+            ...prev,
+            {
+                id: `${Date.now()}-approval-auto`,
+                role: 'assistant',
+                content: `입력 내용을 기반으로 승인 단계를 자동 반영했습니다: ${stepsToApprove
+                    .map((step) => APPROVAL_STEP_LABELS[step] || step)
+                    .join(', ')}`,
+                thread_id: targetThreadId,
+            },
+        ]);
+    };
+
+    const handleSend = async (type: 'chat' | 'job' = 'chat', messageText?: string) => {
+        const sendText = (type === 'chat' ? (messageText ?? input) : '🚀 START TASK');
+        if (!sendText.trim() && type === 'chat') return;
+        if (loading) return;
+        if (!effectiveProjectId) {
+            setContextGuardMessage('상담방을 준비 중입니다. 잠시 후 다시 시도해 주세요.');
+            return;
+        }
+        const requestedThreadId = resolvedThreadId || currentThreadId;
+        const nextThreadId = await resolveAndSetThread(effectiveProjectId, requestedThreadId);
+        if (!nextThreadId) {
+            setLoading(false);
+            setContextGuardMessage('상담 스레드를 준비하지 못했습니다. 잠시 후 다시 시도해 주세요.');
+            return;
+        }
+
+        if (!threadId) {
+            router.replace(`/chat?projectId=${effectiveProjectId}&threadId=${nextThreadId}`);
+        }
+        if (!currentThreadId) {
+            setCurrentThreadId(nextThreadId);
+            setStoreCurrentThreadId(nextThreadId);
+        }
+
+        let requestText = sendText;
+        let retriedFromPending = false;
+        if (type === 'chat' && shouldRetryPreviousRequest(sendText)) {
+            const pending = pendingRetryRef.current;
+            if (pending?.requestText && (!pending.threadId || pending.threadId === nextThreadId)) {
+                requestText = pending.requestText;
+                retriedFromPending = true;
+            }
+        }
 
         // Clear input for chat type
         if (type === 'chat') {
@@ -499,12 +1253,21 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
         const userMsg: Message = {
             id: Date.now().toString(),
             role: 'user',
-            content: type === 'job' ? '🚀 START TASK' : input,
-            thread_id: currentThreadId
+            content: sendText,
+            thread_id: nextThreadId,
         };
 
         setMessages(prev => [...prev, userMsg]);
+        if (type === 'chat') {
+            try {
+                await autoCompleteApprovalStepsFromInput(sendText, nextThreadId);
+            } catch (autoApprovalError) {
+                console.warn('[ChatInterface] auto approval step update skipped', autoApprovalError);
+            }
+        }
         setLoading(true);
+        let activeAiMsgId: string | null = null;
+        let partialAssistantContent = '';
 
         try {
             if (type === 'job') {
@@ -517,22 +1280,24 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
                 try {
                     const response = await api.post(`/projects/${effectiveProjectId}/execute`);
 
-                    const aiMsg: Message = {
-                        id: (Date.now() + 1).toString(),
-                        role: 'assistant',
-                        content: `🚀 Workflow started for project **${activeProject?.name || effectiveProjectId}**.\nExecution ID: \`${response.data.execution_id}\`\nMonitoring real-time logs in the console.`,
-                        hasLogs: true
-                    };
+	                    const aiMsg: Message = {
+	                        id: (Date.now() + 1).toString(),
+	                        role: 'assistant',
+	                        content: `🚀 Workflow started for project **${activeProject?.name || effectiveProjectId}**.\nExecution ID: \`${response.data.execution_id}\`\nMonitoring real-time logs in the console.`,
+	                        hasLogs: true,
+	                        thread_id: nextThreadId,
+	                    };
                     setMessages(prev => [...prev, aiMsg]);
                     setLogs(prev => [...prev, `Workflow accepted by engine. Execution ID: ${response.data.execution_id}`, `Streaming real-time logs...`]);
                 } catch (execError: any) {
                     console.error("Execution trigger failed", execError);
                     setLogs(prev => [...prev, `❌ FAILED: ${execError.response?.data?.detail || execError.message}`]);
-                    setMessages(prev => [...prev, {
-                        id: Date.now().toString(),
-                        role: 'assistant',
-                        content: `⚠️ 작업 시작 중 오류가 발생했습니다: ${execError.response?.data?.detail || execError.message}`
-                    }]);
+	                    setMessages(prev => [...prev, {
+	                        id: Date.now().toString(),
+	                        role: 'assistant',
+	                        content: `⚠️ 작업 시작 중 오류가 발생했습니다: ${execError.response?.data?.detail || execError.message}`,
+	                        thread_id: nextThreadId,
+	                    }]);
                 }
             } else {
                 // [TODO 8] Streaming Chat with Tool Call Interceptor (2nd Layer Protection)
@@ -549,20 +1314,42 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
                     : window.location.hostname;
                 const baseURL = api.defaults.baseURL || `http://${currentHostname}:8002/api/v1`;
 
-                const response = await fetch(`${baseURL}/master/chat-stream`, {
-                    method: 'POST',
-                    headers: {
-                        'Content-Type': 'application/json',
-                        'Authorization': authHeader
-                    },
-                    body: JSON.stringify({
-                        message: userMsg.content,
-                        history: messages.map(m => ({ role: m.role, content: m.content })),
-                        project_id: effectiveProjectId,
-                        thread_id: currentThreadId,
-                        mode: mode // [v4.0] Pass current mode
-                    })
-                });
+                let threadHistory: { role: string; content: string }[] = buildThreadPayloadFromMessages(nextThreadId);
+                if (threadHistory.length === 0) {
+                    try {
+                        const historyRes = await api.get(`/projects/${effectiveProjectId}/threads/${nextThreadId}/messages`, {
+                            params: { limit },
+                        });
+                        threadHistory = Array.isArray(historyRes.data)
+                            ? historyRes.data.map((msg: any) => ({
+                                role: msg.role,
+                                content: stripSignalPayload(msg.content || ''),
+                            }))
+                            : [];
+                    } catch (error: any) {
+                        console.warn('[ChatInterface] Failed to rebuild thread history for stream payload', error);
+                    }
+                }
+
+	                const response = await fetch(`${baseURL}/master/chat-stream`, {
+	                    method: 'POST',
+	                    headers: {
+	                        'Content-Type': 'application/json',
+	                        'Authorization': authHeader
+	                    },
+	                    body: JSON.stringify({
+	                        message: requestText,
+	                        history: [
+	                            ...threadHistory,
+	                            { role: 'user', content: requestText },
+	                        ],
+	                        project_id: effectiveProjectId,
+	                        thread_id: nextThreadId,
+	                        mode,
+	                        mode_change_origin: modeChangeOrigin,
+	                    })
+	                });
+	                setModeChangeOrigin('auto');
 
                 if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
 
@@ -581,94 +1368,175 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
                 // [Fix] 스트리밍 시작 시 로딩 상태 해제 (중복 아이콘 방지)
                 setLoading(false);
 
-                let accumulatedContent = '';
-                const aiMsgId = (Date.now() + 1).toString();
+	                let accumulatedContent = '';
+	                let signalBuffer = '';
+	                let hasParsedDisambiguateSignal = false;
+	                let hasParsedArtifactSignal = false;
+	                let sawReadyToStart = false;
+	                const aiMsgId = (Date.now() + 1).toString();
+	                activeAiMsgId = aiMsgId;
 
-                // Initialize assistant message
-                const aiMsg: Message = {
-                    id: aiMsgId,
-                    role: 'assistant',
-                    content: '',
-                    hasLogs: false,
-                    thread_id: currentThreadId,
-                    request_id: requestId // [v4.2]
-                };
-                setMessages(prev => [...prev, aiMsg]);
+	                const aiMsg: Message = {
+	                    id: aiMsgId,
+	                    role: 'assistant',
+	                    content: '',
+	                    hasLogs: false,
+	                    isStreaming: true,
+	                    thread_id: nextThreadId,
+	                    request_id: requestId,
+	                };
+	                setMessages(prev => [...prev, aiMsg]);
 
-                if (reader) {
-                    while (true) {
-                        const { done, value } = await reader.read();
-                        if (done) break;
+	                if (reader) {
+	                    while (true) {
+	                        const { done, value } = await reader.read();
+	                        if (done) break;
 
-                        const chunk = decoder.decode(value, { stream: true });
+	                        const chunk = decoder.decode(value, { stream: true });
+	                        const filteredChunk = chunk.replace(/<[|｜]tool[▁_]calls[▁_]begin[|｜]>|<[|｜]tool[▁_]calls[▁_]end[|｜]>|<[|｜]tool[▁_]result[▁_]begin[|｜]>|<[|｜]tool[▁_]result[▁_]end[|｜]>/g, '');
 
-                        // [TODO 8] Frontend 2차 안전망: Tool 토큰 필터링
-                        // ASCII 및 유니코드 변형 포함 필터링
-                        let filteredChunk = chunk.replace(/<[|｜]tool[▁_]calls[▁_]begin[|｜]>|<[|｜]tool[▁_]calls[▁_]end[|｜]>|<[|｜]tool[▁_]result[▁_]begin[|｜]>|<[|｜]tool[▁_]result[▁_]end[|｜]>/g, '');
+	                        signalBuffer += filteredChunk;
+	                        const { text, carry, signals } = extractSignalsFromBuffer(signalBuffer);
+	                        signalBuffer = carry;
 
-                        // [v4.0] Handle Mode Switch Signal
-                        // Format: {"type": "MODE_SWITCH", "mode": "REQUIREMENT", "reason": "..."}
-                        const modeSignalMatch = filteredChunk.match(/\{"type":\s*"MODE_SWITCH"[\s\S]*?\}/);
-                        if (modeSignalMatch) {
-                            try {
-                                const signal = JSON.parse(modeSignalMatch[0]);
-                                if (signal.mode && MODE_CONFIG[signal.mode as ConversationMode]) {
-                                    const newMode = signal.mode as ConversationMode;
-                                    setMode(newMode);
-                                    // console.log(`[Mode Switch] Auto-switched to ${signal.mode}`);
-                                    // Remove signal from content
-                                    filteredChunk = filteredChunk.replace(modeSignalMatch[0], '').trim();
+	                        signals.forEach((signal) => {
+	                            if (signal.type === 'PIPELINE_PROGRESS') {
+	                                setMessages((prev) =>
+	                                    prev.map((m) => {
+	                                        if (m.id !== aiMsgId) return m;
+	                                        const prevSteps = Array.isArray(m.progressSteps) ? m.progressSteps : [];
+	                                        if (prevSteps[prevSteps.length - 1] === signal.message) {
+	                                            return m;
+	                                        }
+	                                        return {
+	                                            ...m,
+	                                            progressSteps: [...prevSteps, signal.message],
+	                                        };
+	                                    })
+	                                );
+	                                return;
+	                            }
 
-                                    // [v5.0] Auto-Revert Logic (Visual/Functional Recovery)
-                                    // If mode switched to FUNCTION, we assume it's temporary for the tool call
-                                    // But if it's REQUIREMENT, it might be persistent.
-                                    // For now, we ensure the UI updates immediately (setMode does this).
-                                    // If we wanted to "revert" after 5 seconds, we could:
-                                    /*
-                                    if (newMode === 'FUNCTION') {
-                                        setTimeout(() => setMode('NATURAL'), 5000);
-                                    }
-                                    */
-                                }
-                            } catch (e) {
-                                console.error("Failed to parse mode signal", e);
-                            }
-                        }
+	                            if (signal.type === 'MODE_SWITCH') {
+	                                setMode(signal.mode);
+	                                setModeChangeOrigin('auto');
+	                                return;
+	                            }
 
-                        accumulatedContent += filteredChunk;
+	                            if (signal.type === 'DISAMBIGUATE_OPTIONS' && !hasParsedDisambiguateSignal) {
+	                                hasParsedDisambiguateSignal = true;
+	                                setMessages((prev) =>
+	                                    prev.map((m) =>
+	                                        m.id === aiMsgId
+	                                            ? { ...m, disambiguateOptions: signal.options }
+	                                            : m
+	                                    )
+	                                );
+	                                return;
+	                            }
 
-                        // [Fix] 정규식 강화: 공백, 줄바꿈, 따옴표 종류에 유연하게 대응
-                        const jsonMatch = accumulatedContent.match(/\{[\s\S]*?"status"\s*:\s*"READY_TO_START"[\s\S]*?\}/);
-                        if (jsonMatch) {
-                            try {
-                                // console.log("DEBUG: READY_TO_START detected!");
-                                const signal = JSON.parse(jsonMatch[0]);
-                                setReadyToStart(true);
-                                setFinalSummary(signal.final_summary);
+	                            if (signal.type === 'ARTIFACT_ACTIONS' && !hasParsedArtifactSignal) {
+	                                hasParsedArtifactSignal = true;
+	                                setMessages((prev) =>
+	                                    prev.map((m) =>
+	                                        m.id === aiMsgId
+	                                            ? {
+	                                                ...m,
+	                                                artifactActions: {
+	                                                    artifactType: signal.artifact_type,
+	                                                    htmlUrl: signal.html_url,
+	                                                    pdfUrl: signal.pdf_url,
+	                                                    approvalUrl: signal.approval_url,
+	                                                    completedSteps: signal.completed_steps,
+	                                                    totalSteps: signal.total_steps,
+	                                                    missingSteps: signal.missing_steps || [],
+	                                                    missingStepGuides: signal.missing_step_guides || [],
+	                                                    missingFieldGuides: signal.missing_field_guides || [],
+	                                                },
+	                                            }
+	                                            : m
+	                                    )
+	                                );
+	                                return;
+	                            }
 
-                                // Update UI message (hide JSON)
-                                const cleanContent = accumulatedContent.replace(jsonMatch[0], '').trim();
-                                setMessages(prev => prev.map(m =>
-                                    m.id === aiMsgId ? { ...m, content: cleanContent || "설정이 완료되었습니다. 아래 [START TASK] 버튼을 눌러 작업을 시작해 주세요." } : m
-                                ));
-                            } catch (e) {
-                                // JSON이 아직 덜 받아와졌을 수 있으므로 무시하고 다음 청크 대기
-                            }
-                        } else {
-                            setMessages(prev => prev.map(m =>
-                                m.id === aiMsgId ? { ...m, content: accumulatedContent } : m
-                            ));
-                        }
+	                            if (signal.type === 'READY_TO_START') {
+	                                sawReadyToStart = true;
+	                                setReadyToStart(true);
+	                                setFinalSummary(signal.final_summary);
+	                            }
+	                        });
+
+	                        if (text) {
+	                            accumulatedContent += text;
+	                        }
+
+	                        partialAssistantContent = stripSignalPayload(accumulatedContent);
+	                        setMessages(prev => prev.map(m =>
+	                            m.id === aiMsgId
+	                                ? { ...m, content: partialAssistantContent, isStreaming: true }
+	                                : m
+	                        ));
+	                    }
+	                }
+
+	                if (signalBuffer.trim()) {
+	                    accumulatedContent += signalBuffer;
+	                }
+	                partialAssistantContent = stripSignalPayload(accumulatedContent);
+	                const finalizedContent = partialAssistantContent || (
+	                    sawReadyToStart
+	                        ? "설정이 완료되었습니다. 아래 [START TASK] 버튼을 눌러 작업을 시작해 주세요."
+	                        : ''
+	                );
+                    pendingRetryRef.current = null;
+	                setMessages(prev => prev.map(m =>
+	                    m.id === aiMsgId
+	                        ? { ...m, content: finalizedContent, isStreaming: false }
+	                        : m
+	                ));
+                    if (retriedFromPending) {
+                        setMessages((prev) => [
+                            ...prev,
+                            {
+                                id: `${Date.now()}-retry-info`,
+                                role: 'assistant',
+                                content: '방금 끊긴 요청을 이어서 재시도해 완료했습니다.',
+                                thread_id: nextThreadId,
+                            },
+                        ]);
                     }
-                }
-            }
+	            }
         } catch (error: any) {
             console.error('Failed to send message', error);
-            setMessages(prev => [...prev, {
-                id: Date.now().toString(),
-                role: 'assistant',
-                content: `Error: ${error.response?.data?.detail || error.message}`
-            }]);
+            const rawErrorMessage = error?.response?.data?.detail || error?.message || 'unknown error';
+            const friendlyMessage = String(rawErrorMessage).toLowerCase().includes('network error')
+                ? '연결이 중간에 끊어졌습니다. 같은 내용을 한 번 더 보내면 검증/생성을 이어서 진행할 수 있습니다.'
+                : `오류가 발생했습니다: ${rawErrorMessage}`;
+            if (type === 'chat' && String(rawErrorMessage).toLowerCase().includes('network error') && requestText?.trim()) {
+                pendingRetryRef.current = { threadId: nextThreadId, requestText };
+            }
+
+            if (activeAiMsgId) {
+                setMessages((prev) =>
+                    prev.map((m) =>
+                        m.id === activeAiMsgId
+                            ? {
+                                ...m,
+                                isStreaming: false,
+                                content: `${stripSignalPayload(partialAssistantContent || m.content || '')}\n\n${friendlyMessage}`.trim(),
+                            }
+                            : m
+                    )
+                );
+            } else {
+                setMessages(prev => [...prev, {
+                    id: Date.now().toString(),
+                    role: 'assistant',
+                    content: friendlyMessage,
+                    thread_id: nextThreadId,
+                }]);
+            }
         } finally {
             setLoading(false);
         }
@@ -688,6 +1556,152 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
     const filteredProjects = projects.filter(p =>
         p.name.toLowerCase().includes(mentionSearch.toLowerCase())
     );
+
+    const visibleMessages = visibleThreadId
+        ? messages.filter((msg) => msg.thread_id === visibleThreadId)
+        : messages;
+
+    const normalizeApiPath = (pathOrUrl?: string) => {
+        if (!pathOrUrl) return '';
+        if (pathOrUrl.startsWith('/api/v1/')) {
+            return pathOrUrl.replace('/api/v1', '');
+        }
+        if (pathOrUrl.startsWith('/')) return pathOrUrl;
+        if (/^https?:\/\//i.test(pathOrUrl)) {
+            try {
+                const parsed = new URL(pathOrUrl);
+                const fullPath = `${parsed.pathname}${parsed.search || ''}`;
+                return fullPath.startsWith('/api/v1/')
+                    ? fullPath.replace('/api/v1', '')
+                    : fullPath;
+            } catch {
+                return '';
+            }
+        }
+        return pathOrUrl;
+    };
+
+    const openArtifactUrl = async (pathOrUrl?: string) => {
+        const apiPath = normalizeApiPath(pathOrUrl);
+        if (!apiPath) return;
+        const approvalParams = visibleThreadId ? { threadId: visibleThreadId } : undefined;
+
+        try {
+            if (apiPath.includes('/approval')) {
+                const res = await api.get(apiPath, { params: approvalParams });
+                const data = res.data || {};
+                const missing = Array.isArray(data.missing_steps) ? data.missing_steps : [];
+                const missingGuides = Array.isArray(data.missing_step_guides) ? data.missing_step_guides : [];
+                const completed = 4 - missing.length;
+                const guideText = missing.length > 0
+                    ? missing.map((step: string, idx: number) => {
+                        const guideFromBackend = missingGuides[idx];
+                        return `- ${guideFromBackend || `${APPROVAL_STEP_LABELS[step] || step}: ${APPROVAL_STEP_GUIDES[step] || '검토 후 완료해 주세요.'}`}`;
+                    }).join('\n')
+                    : '모든 승인 단계가 완료되었습니다. PDF 다운로드가 가능합니다.';
+                setMessages((prev) => [
+                    ...prev,
+                    {
+                        id: `${Date.now()}-approval-view`,
+                        role: 'assistant',
+                        content: `현재 승인 진행은 ${completed}/4 입니다.\n${guideText}`,
+                        thread_id: visibleThreadId || undefined,
+                    },
+                ]);
+                return;
+            }
+
+            const res = await api.get(apiPath, { responseType: 'blob', params: approvalParams });
+            const contentType = res.headers?.['content-type'] || 'application/octet-stream';
+            const isMarkdownLike =
+                apiPath.includes('format=markdown')
+                || contentType.includes('text/markdown')
+                || contentType.includes('text/plain');
+
+            if (isMarkdownLike) {
+                const rawText = await new Blob([res.data], { type: contentType }).text();
+                const markdownText = rawText.includes('\\n') && !rawText.includes('\n')
+                    ? rawText.replace(/\\n/g, '\n')
+                    : rawText;
+                setMessages((prev) => [
+                    ...prev,
+                    {
+                        id: `${Date.now()}-artifact-markdown`,
+                        role: 'assistant',
+                        content: markdownText,
+                        thread_id: visibleThreadId || undefined,
+                    },
+                ]);
+                return;
+            }
+            const blob = new Blob([res.data], { type: contentType });
+            const blobUrl = URL.createObjectURL(blob);
+            const win = window.open(blobUrl, '_blank', 'noopener,noreferrer');
+
+            if (!win) {
+                const a = document.createElement('a');
+                a.href = blobUrl;
+                a.download = apiPath.includes('format=pdf') ? 'business_plan.pdf' : 'business_plan.html';
+                document.body.appendChild(a);
+                a.click();
+                a.remove();
+            }
+            window.setTimeout(() => URL.revokeObjectURL(blobUrl), 60_000);
+        } catch (e: any) {
+            const isPdfDownload = apiPath.includes('format=pdf');
+            const isApprovalBlocked = e?.response?.status === 409 && isPdfDownload;
+            const errorMessage = isApprovalBlocked
+                ? 'PDF 다운로드를 위해 남은 단계를 진행해주세요.'
+                : `파일 열기/다운로드 중 오류가 발생했습니다: ${e?.response?.data?.detail?.message || e?.message || 'unknown error'}`;
+            setMessages((prev) => [
+                ...prev,
+                {
+                    id: `${Date.now()}-artifact-open-error`,
+                    role: 'assistant',
+                    content: errorMessage,
+                    thread_id: visibleThreadId || undefined,
+                },
+            ]);
+        }
+    };
+
+    const completeApprovalStep = async (messageId: string, step: string) => {
+        if (!projectId) return;
+        const approvalParams = visibleThreadId ? { threadId: visibleThreadId } : undefined;
+        try {
+            await api.post(`/projects/${projectId}/artifacts/business_plan/approval`, {
+                step,
+                approved: true,
+            }, { params: approvalParams });
+            const approvalRes = await api.get(`/projects/${projectId}/artifacts/business_plan/approval`, { params: approvalParams });
+            const data = approvalRes.data || {};
+            setMessages((prev) =>
+                prev.map((m) => {
+                    if (m.id !== messageId || !m.artifactActions) return m;
+                    return {
+                        ...m,
+                        artifactActions: {
+                            ...m.artifactActions,
+                            completedSteps: 4 - ((data.missing_steps || []).length || 0),
+                            totalSteps: 4,
+                            missingSteps: Array.isArray(data.missing_steps) ? data.missing_steps : [],
+                            missingStepGuides: Array.isArray(data.missing_step_guides) ? data.missing_step_guides : [],
+                        },
+                    };
+                })
+            );
+        } catch (e: any) {
+            setMessages((prev) => [
+                ...prev,
+                {
+                    id: `${Date.now()}-approval-error`,
+                    role: 'assistant',
+                    content: `승인 단계 업데이트 중 오류가 발생했습니다: ${e?.response?.data?.detail?.message || e?.message || 'unknown error'}`,
+                    thread_id: visibleThreadId || undefined,
+                },
+            ]);
+        }
+    };
 
     return (
         <div className="flex flex-col h-dvh relative bg-zinc-950 text-white overflow-hidden">
@@ -727,7 +1741,7 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
                                 <span className="text-zinc-600">/</span>
                                 <span>Chat Room</span>
                             </>
-                        ) : 'Global System Context'}
+                        ) : contextGuardMessage || 'Global System Context'}
                     </span>
                     {threadId && (
                         <span className="text-[10px] bg-zinc-800 px-2 py-0.5 rounded text-zinc-500 font-mono ml-2">
@@ -735,15 +1749,6 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
                         </span>
                     )}
                 </div>
-                
-                {/* [v5.0] Upload Progress Bar */}
-                {uploadProgress && (
-                    <div className="mr-4 flex items-center gap-2 text-[10px] font-mono text-emerald-400 animate-pulse bg-emerald-900/20 px-2 py-1 rounded">
-                        <FolderUp size={12} />
-                        <span>{uploadProgress.processed}/{uploadProgress.total} Files</span>
-                    </div>
-                )}
-
                 {hasMore && (
                     <button
                         onClick={handleLoadMore}
@@ -756,16 +1761,23 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
 
             {/* Chat Area */}
             <div className="flex-1 overflow-y-auto p-4 space-y-6 min-h-0 scrollbar-thin scrollbar-thumb-zinc-800 scrollbar-track-transparent">
-                {messages.length === 0 && !loading ? (
+                {contextGuardMessage && (
+                    <div className="rounded-xl border border-yellow-400/40 bg-yellow-400/10 text-yellow-200 px-4 py-3 text-sm">
+                        {contextGuardMessage}
+                    </div>
+                )}
+                {visibleMessages.length === 0 && !loading ? (
                     <div className="flex flex-col items-center justify-center h-full text-center space-y-6 opacity-30">
                         <Bot size={64} className="text-indigo-500" />
                         <div>
-                            <h2 className="text-xl font-bold text-zinc-200">Ready to assist</h2>
-                            <p className="text-sm text-zinc-500 mt-2">Mention projects with @ or start a task.</p>
+                            <h2 className="text-xl font-bold text-zinc-200">AIBizPlan 시작 안내</h2>
+                            <p className="text-sm text-zinc-500 mt-2 text-left whitespace-pre-wrap max-w-2xl">
+                                {projectId ? DEFAULT_WELCOME_MESSAGES.room_ready : DEFAULT_WELCOME_MESSAGES.first_login}
+                            </p>
                         </div>
                     </div>
                 ) : (
-                    messages.map((msg) => (
+                    visibleMessages.map((msg) => (
                         <div key={msg.id} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
                             <div className={`flex gap-3 max-w-[85%] ${msg.role === 'user' ? 'flex-row-reverse' : ''}`}>
                                 <div className={`w-8 h-8 rounded-lg flex-shrink-0 flex items-center justify-center ${msg.role === 'user' ? 'bg-indigo-600' : 'bg-zinc-800 border border-zinc-700'
@@ -776,13 +1788,132 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
                                     ? 'bg-indigo-600/10 text-zinc-100 border border-indigo-500/30'
                                     : 'bg-zinc-900 text-zinc-300 border border-zinc-800 shadow-sm'
                                     }`}>
-                                    <div className="whitespace-pre-wrap text-sm leading-relaxed">
-                                        {/* [Fix] 렌더링 시 JSON 신호를 숨깁니다. */}
+                                    <div className="whitespace-pre-wrap text-sm leading-relaxed break-words">
                                         {msg.role === 'assistant'
-                                            ? msg.content.replace(/\{[\s\S]*?"status"\s*:\s*"READY_TO_START"[\s\S]*?\}/, '').trim()
+                                            ? renderMarkdownMessageContent(msg.content)
                                             : msg.content
                                         }
                                     </div>
+
+                                    {msg.role === 'assistant' && msg.progressSteps && msg.progressSteps.length > 0 && (
+                                        <div className="mt-3 rounded-lg border border-zinc-700/60 bg-zinc-800/30 px-3 py-2">
+                                            <div className="text-[11px] uppercase tracking-wide text-zinc-400 mb-1 flex items-center gap-1.5">
+                                                <span>진행 상태</span>
+                                                {msg.isStreaming && <Loader2 size={11} className="animate-spin text-indigo-300" />}
+                                            </div>
+                                            <div className="space-y-1">
+                                                {msg.progressSteps.map((step, idx) => (
+                                                    <div key={`${msg.id}-progress-${idx}`} className="text-xs text-zinc-200">
+                                                        {idx + 1}. {step}
+                                                    </div>
+                                                ))}
+                                            </div>
+                                            <div className="mt-2">
+                                                <div className="h-1.5 rounded-full bg-zinc-700/70 overflow-hidden">
+                                                    <div
+                                                        className={`h-full bg-indigo-400 transition-all duration-500 ${msg.isStreaming ? 'animate-pulse' : ''}`}
+                                                        style={{ width: `${getProgressPercent(msg.progressSteps)}%` }}
+                                                    />
+                                                </div>
+                                                <div className="mt-1 text-[11px] text-zinc-400">
+                                                    {msg.isStreaming
+                                                        ? `${msg.progressSteps[msg.progressSteps.length - 1]}...`
+                                                        : '처리 완료'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                    )}
+
+                                    {msg.role === 'assistant' && msg.isStreaming && (!msg.progressSteps || msg.progressSteps.length === 0) && (
+                                        <div className="mt-3 inline-flex items-center gap-2 rounded-lg border border-zinc-700/60 bg-zinc-800/30 px-3 py-1.5 text-xs text-zinc-300">
+                                            <Loader2 size={12} className="animate-spin text-indigo-300" />
+                                            <span>응답 생성 중...</span>
+                                        </div>
+                                    )}
+
+                                    {msg.role === 'assistant' && msg.disambiguateOptions && msg.disambiguateOptions.length > 0 && (
+                                        <div className="mt-3 flex flex-wrap gap-2">
+                                            {msg.disambiguateOptions.map((option) => (
+                                                <button
+                                                    key={option}
+                                                    onClick={() => sendDisambiguateOption(option)}
+                                                    className="text-xs px-3 py-2 rounded-lg bg-indigo-600/20 border border-indigo-500/40 text-indigo-200 hover:bg-indigo-600/30 transition-colors"
+                                                >
+                                                    {option}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+
+                                    {msg.role === 'assistant' && msg.artifactActions && (
+                                        <div className="mt-3 space-y-2 border-t border-zinc-700/60 pt-3">
+                                            <div className="flex flex-wrap gap-2">
+                                                {msg.artifactActions.htmlUrl && (
+                                                    <button
+                                                        onClick={() => openArtifactUrl(msg.artifactActions?.htmlUrl)}
+                                                        className="text-xs px-3 py-2 rounded-lg bg-indigo-600/20 border border-indigo-500/40 text-indigo-200 hover:bg-indigo-600/30 transition-colors"
+                                                    >
+                                                        결과 보기
+                                                    </button>
+                                                )}
+                                                {msg.artifactActions.pdfUrl && (
+                                                    <button
+                                                        onClick={() => openArtifactUrl(msg.artifactActions?.pdfUrl)}
+                                                        className="text-xs px-3 py-2 rounded-lg bg-zinc-700/40 border border-zinc-500/40 text-zinc-200 hover:bg-zinc-700/60 transition-colors"
+                                                    >
+                                                        PDF 다운로드
+                                                    </button>
+                                                )}
+                                                {msg.artifactActions.approvalUrl && (
+                                                    <button
+                                                        onClick={() => openArtifactUrl(msg.artifactActions?.approvalUrl)}
+                                                        className="text-xs px-3 py-2 rounded-lg bg-emerald-600/20 border border-emerald-500/40 text-emerald-200 hover:bg-emerald-600/30 transition-colors"
+                                                    >
+                                                        승인 상태 확인
+                                                    </button>
+                                                )}
+                                            </div>
+                                            {typeof msg.artifactActions.completedSteps === 'number' && typeof msg.artifactActions.totalSteps === 'number' && (
+                                                <div className="text-xs text-zinc-400">
+                                                    PDF 승인 진행률: {msg.artifactActions.completedSteps}/{msg.artifactActions.totalSteps}
+                                                </div>
+                                            )}
+                                            {msg.artifactActions.missingSteps && msg.artifactActions.missingSteps.length > 0 && (
+                                                <div className="space-y-1">
+                                                    <div className="text-xs text-amber-300">남은 단계 안내</div>
+                                                    {msg.artifactActions.missingSteps.map((step, idx) => {
+                                                        const guideFromBackend = msg.artifactActions?.missingStepGuides?.[idx];
+                                                        const guideText = guideFromBackend || `${APPROVAL_STEP_LABELS[step] || step}: ${APPROVAL_STEP_GUIDES[step] || '검토 후 완료해 주세요.'}`;
+                                                        return (
+                                                        <div key={`${msg.id}-${step}-${idx}`} className="text-xs text-zinc-300 flex items-center justify-between gap-2">
+                                                            <span>
+                                                                - {guideText}
+                                                            </span>
+                                                            <button
+                                                                onClick={() => completeApprovalStep(msg.id, step)}
+                                                                className="shrink-0 px-2 py-1 rounded bg-amber-500/20 border border-amber-400/40 text-amber-200 hover:bg-amber-500/30"
+                                                            >
+                                                                완료 처리
+                                                            </button>
+                                                        </div>
+                                                    )})}
+                                                </div>
+                                            )}
+                                            {msg.artifactActions.missingFieldGuides && msg.artifactActions.missingFieldGuides.length > 0 && (
+                                                <div className="space-y-1">
+                                                    <div className="text-xs text-sky-300">양식 입력 보강 안내</div>
+                                                    <div className="text-[11px] text-zinc-500">
+                                                        참고: 이 항목은 문서 품질 보강용이며, PDF 승인 진행률(4단계)과는 별개입니다.
+                                                    </div>
+                                                    {msg.artifactActions.missingFieldGuides.map((guide, idx) => (
+                                                        <div key={`${msg.id}-field-guide-${idx}`} className="text-xs text-zinc-300">
+                                                            - {guide}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    )}
 
                                     {/* [v4.2 UX] Admin-Only Source Bar (Enhanced) */}
                                     {/* Removed !loading check to show bar immediately if request_id is present */}
@@ -857,6 +1988,43 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
             {/* Input Area */}
             <div className="p-4 border-t border-zinc-800/50 bg-zinc-950">
                 <div className="max-w-4xl mx-auto">
+                    {(selectedFiles.length > 0 || uploadNotice) && (
+                        <div className="mb-3 rounded-xl border border-zinc-800 bg-zinc-900/40 px-3 py-2 space-y-2">
+                            {selectedFiles.length > 0 && (
+                                <div className="space-y-2">
+                                    <div className="text-[11px] text-zinc-400 uppercase tracking-wide">
+                                        첨부파일 미리보기 ({selectedFiles.length}개)
+                                    </div>
+                                    <div className="flex flex-wrap gap-2">
+                                        {selectedFiles.map((file) => (
+                                            <span
+                                                key={`${file.name}-${file.size}-${file.lastModified}`}
+                                                className="inline-flex items-center gap-2 rounded-lg bg-zinc-800/80 px-2 py-1 text-xs text-zinc-200 border border-zinc-700"
+                                            >
+                                                <FileText size={12} />
+                                                <span className="font-medium">{file.name}</span>
+                                                <span className="text-zinc-500">({formatFileSize(file.size)})</span>
+                                            </span>
+                                        ))}
+                                    </div>
+                                </div>
+                            )}
+
+                            {!selectedFiles.length && uploadNotice ? (
+                                <div className={`text-xs ${uploadNotice.type === 'success' ? 'text-emerald-400' : uploadNotice.type === 'partial' ? 'text-amber-300' : 'text-rose-400'}`}>
+                                    {uploadNotice.text}
+                                </div>
+                            ) : (
+                                isUploading && (
+                                    <div className="text-xs text-indigo-300 animate-pulse flex items-center gap-2">
+                                        <Loader2 size={12} className="animate-spin" />
+                                        첨부파일 업로드 진행 중
+                                    </div>
+                                )
+                            )}
+                        </div>
+                    )}
+
                     <div className={`relative flex items-end gap-2 rounded-2xl border bg-zinc-900/30 p-2 shadow-inner transition-all ${MODE_CONFIG[mode].border} focus-within:ring-1 focus-within:ring-opacity-20`}>
                         {/* [v4.0] Mode Switcher */}
                         <div className="relative">
@@ -869,7 +2037,6 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
                                     <div className={`w-2.5 h-2.5 rounded-full ${MODE_CONFIG[mode].bg}`}></div>
                                 </div>
                             </button>
-
                             {showModeMenu && (
                                 <div className="absolute bottom-12 left-0 w-48 bg-zinc-900 border border-zinc-800 rounded-xl shadow-xl overflow-hidden z-50 animate-in slide-in-from-bottom-2">
                                     <div className="p-2 text-[10px] font-bold text-zinc-500 uppercase bg-zinc-950/50 border-b border-zinc-800">
@@ -879,7 +2046,10 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
                                         <button
                                             key={key}
                                             onClick={() => {
-                                                setMode(key as ConversationMode);
+                                                const nextMode = key as ConversationMode;
+                                                setMode(nextMode);
+                                                setModeChangeOrigin('user');
+                                                pushModeGuideMessage(nextMode);
                                                 setShowModeMenu(false);
                                             }}
                                             className={`w-full text-left px-4 py-3 text-sm hover:bg-zinc-800 transition-colors flex items-center gap-3 ${mode === key ? 'bg-zinc-800/50' : ''}`}
@@ -898,6 +2068,7 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
                             type="file"
                             ref={fileInputRef}
                             onChange={handleFileUpload}
+                            multiple
                             className="hidden"
                         />
                         <button 
@@ -908,22 +2079,6 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
                             <Paperclip size={20} />
                         </button>
                         
-                        {/* [v5.0] Folder Upload Button */}
-                        <input
-                            type="file"
-                            ref={folderInputRef}
-                            onChange={handleFolderUpload}
-                            className="hidden"
-                            {...({ webkitdirectory: "", directory: "", multiple: true } as any)}
-                        />
-                        <button 
-                            onClick={() => folderInputRef.current?.click()}
-                            className="p-2.5 text-zinc-500 hover:text-indigo-400 hover:bg-zinc-800 rounded-xl transition-colors flex-shrink-0"
-                            title="Upload Folder (Recursive)"
-                        >
-                            <FolderUp size={20} />
-                        </button>
-
                         <textarea
                             ref={inputRef}
                             value={input}
@@ -940,7 +2095,7 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
                                     handleSend('chat');
                                 }
                             }}
-                            placeholder={projectId ? `Chatting in context of ${activeProject?.name}...` : "Type a message or use @ to mention projects..."}
+                            placeholder="텍스트를 입력해주세요."
                             className="flex-1 max-h-40 min-h-[2.75rem] bg-transparent py-3 px-1 text-sm text-zinc-100 placeholder-zinc-600 focus:outline-none resize-none scrollbar-hide"
                             rows={1}
                         />
@@ -948,7 +2103,7 @@ export default function ChatInterface({ projectId: propProjectId, threadId }: Ch
                         <div className="flex items-center gap-2 p-1">
                             <button
                                 onClick={() => handleSend('chat')}
-                                disabled={!input.trim() || loading}
+                                disabled={!input.trim() || loading || !effectiveProjectId}
                                 className="p-2 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded-xl transition-colors disabled:opacity-30"
                             >
                                 <Send size={20} />

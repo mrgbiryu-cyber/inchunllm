@@ -29,7 +29,8 @@ from app.models.schemas import (
 from app.api.dependencies import (
     get_current_active_user,
     get_current_super_admin,
-    verify_worker_credentials
+    verify_worker_credentials,
+    forbidden_role_detail,
 )
 from app.services.job_manager import JobManager, PermissionDenied, QuotaExceeded
 
@@ -120,7 +121,7 @@ async def create_job(
         )
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(e)
+            detail=forbidden_role_detail(f"Permission denied: {e}", "권한 또는 접근 제어 정책"),
         )
     
     except QuotaExceeded as e:
@@ -182,7 +183,7 @@ async def get_job_status(
     except PermissionDenied as e:
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
-            detail=str(e)
+            detail=forbidden_role_detail(str(e), "권한 또는 접근 제어 정책"),
         )
 
 
