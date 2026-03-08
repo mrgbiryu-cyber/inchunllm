@@ -1,0 +1,937 @@
+<!DOCTYPE html>
+<html lang="ko">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>기초진단 BM 진단 보고서</title>
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+KR:wght@300;400;500;600;700&display=swap"
+        rel="stylesheet" />
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+            background: #f5f5f5;
+            color: #222;
+            font-size: 13px;
+        }
+
+        .page {
+            width: 794px;
+            margin: 30px auto;
+            background: #fff;
+            padding: 36px 40px 48px;
+            box-shadow: 0 2px 16px rgba(0, 0, 0, .12);
+        }
+
+        /* ── 상단 예시 라벨 ── */
+        .example-label {
+            font-size: 12px;
+            font-weight: 700;
+            margin-bottom: 6px;
+            color: #333;
+        }
+
+        /* ═══ 역량진단평가 결과 박스 ═══ */
+        .eval-box {
+            border: 1.5px solid #aaa;
+            margin-bottom: 28px;
+        }
+
+        .eval-title {
+            background: #4472c4;
+            color: #fff;
+            text-align: center;
+            font-size: 14px;
+            font-weight: 700;
+            padding: 7px 0;
+            letter-spacing: 1px;
+        }
+
+        .eval-body {
+            display: flex;
+        }
+
+        /* 왼쪽: 기업평가 / 아이템평가 */
+        .eval-left {
+            display: flex;
+            flex-direction: column;
+            /* ① 카테고리 영역 넓힘 */
+            width: 80px;
+            flex-shrink: 0;
+        }
+
+        .eval-cat {
+            background: #4472c4;
+            color: #fff;
+            font-weight: 700;
+            font-size: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            padding: 6px;
+            border-top: 1px solid #6894d0;
+            line-height: 1.4;
+        }
+
+        /* 가운데: 기초역량 / 기술성 / 사업성 */
+        .eval-mid {
+            display: flex;
+            flex-direction: column;
+            /* ② 서브 카테고리 + 바 영역 넓힘 */
+            width: 110px;
+            flex-shrink: 0;
+            border-left: 1px solid #aaa;
+            border-right: 1px solid #aaa;
+        }
+
+        .eval-sub {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+            font-weight: 700;
+            font-size: 12px;
+            background: #4472c4;
+            color: #fff;
+            border-top: 1px solid #6894d0;
+            flex: 1;
+            padding: 6px 4px;
+        }
+
+        .eval-sub .bar {
+            display: block;
+            height: 7px;
+            background: #ffc000;
+            border-radius: 2px;
+            margin-top: 5px;
+            /* ③ 바 너비 확장 */
+            width: 85%;
+        }
+
+        /* 오른쪽: 항목 텍스트 — ④ 영역 줄임 */
+        .eval-items {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .eval-item-row {
+            display: flex;
+            align-items: center;
+            border-top: 1px solid #ddd;
+            /* ⑤ 텍스트 패딩 줄임 */
+            padding: 4px 8px;
+            gap: 6px;
+            font-size: 11.5px;
+            min-height: 24px;
+        }
+
+        .dot-fill {
+            color: #222;
+        }
+
+        .dot-half {
+            color: #666;
+        }
+
+        .dot-empty {
+            color: #ccc;
+        }
+
+        .eval-section-border {
+            border-top: 1.5px solid #aaa;
+        }
+
+        /* ── 정렬: 기업평가(기초역량 4행) / 아이템평가(기술성3+사업성3 = 6행) ── */
+        /* 기업평가 셀은 4행(기초역량) 높이와 맞춰야 함 */
+        .eval-cat-company {
+            flex: 4;
+        }
+
+        /* 4행 */
+        .eval-cat-item {
+            flex: 6;
+        }
+
+        /* 6행 */
+        .eval-sub-basic {
+            flex: 4;
+        }
+
+        /* 기초역량 4행 */
+        .eval-sub-tech {
+            flex: 3;
+        }
+
+        /* 기술성 3행 */
+        .eval-sub-biz {
+            flex: 3;
+        }
+
+        /* 사업성 3행 */
+
+        /* ── 보고서 제목 ── */
+        .report-title {
+            text-align: center;
+            font-size: 18px;
+            font-weight: 700;
+            margin: 24px 0 16px;
+            letter-spacing: 2px;
+        }
+
+        /* ── 기본 정보 표 ── */
+        .info-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 14px;
+            font-size: 12.5px;
+        }
+
+        .info-table th,
+        .info-table td {
+            border: 1px solid #888;
+            padding: 6px 10px;
+            vertical-align: middle;
+        }
+
+        .info-table th {
+            background: #222;
+            color: #fff;
+            font-weight: 700;
+            text-align: center;
+            white-space: nowrap;
+        }
+
+        .check-inline {
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            margin-right: 12px;
+            font-size: 12px;
+        }
+
+        .check-box {
+            width: 12px;
+            height: 12px;
+            border: 1.5px solid #555;
+            display: inline-block;
+            margin-right: 2px;
+        }
+
+        /* ── 스케일업 유형 ── */
+        .scaleup-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 14px;
+            font-size: 12px;
+        }
+
+        .scaleup-table th,
+        .scaleup-table td {
+            border: 1px solid #888;
+            padding: 5px 8px;
+            vertical-align: middle;
+        }
+
+        .scaleup-table th {
+            background: #222;
+            color: #fff;
+            font-weight: 700;
+            text-align: center;
+        }
+
+        /* ⑥ 현황 열 제거로 인한 여백 셀 없앰 — 선택 표시 셀만 남김 */
+        .su-active-cell {
+            background: #fff9c4;
+            text-align: center;
+            width: 36px;
+            font-weight: 700;
+        }
+
+        .su-empty-cell {
+            width: 36px;
+        }
+
+        .su-type-cell {
+            font-weight: 600;
+            background: #e8f0fe;
+            text-align: center;
+            width: 56px;
+        }
+
+        .su-growth {
+            color: #1a7f37;
+        }
+
+        .su-leap {
+            color: #b45309;
+        }
+
+        .su-early {
+            color: #b91c1c;
+        }
+
+        /* ── 섹션 헤더 ── */
+        .section-header {
+            background: #222;
+            color: #fff;
+            text-align: center;
+            font-weight: 700;
+            font-size: 13px;
+            padding: 6px 0;
+            margin-top: 12px;
+            letter-spacing: 1px;
+        }
+
+        /* ── 지속가능성 점수표 ── */
+        .score-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+            margin-bottom: 0;
+        }
+
+        .score-table th,
+        .score-table td {
+            border: 1px solid #aaa;
+            padding: 5px 4px;
+            text-align: center;
+            vertical-align: middle;
+        }
+
+        .score-table thead th {
+            background: #d9d9d9;
+            font-weight: 700;
+            font-size: 11px;
+        }
+
+        .score-table .group-header {
+            background: #bfbfbf;
+            font-weight: 700;
+        }
+
+        /* ⑦ 점수 행 높이 증가 */
+        .score-table tbody tr td {
+            height: 36px;
+        }
+
+        .score-table td.score-val {
+            font-weight: 600;
+        }
+
+        .score-table td.avg-val {
+            color: #444;
+        }
+
+        /* ── 분석 텍스트 ── */
+        .analysis-box {
+            border: 1px solid #aaa;
+            border-top: none;
+            padding: 10px 14px;
+            font-size: 12px;
+            line-height: 1.85;
+            background: #fff;
+            min-height: 70px;
+        }
+
+        .analysis-box li {
+            margin-left: 16px;
+            margin-bottom: 4px;
+        }
+
+        /* ═══ 역량 점수표 (세로 전체 폭) ═══ */
+        .cap-score-wrap {
+            border: 1px solid #aaa;
+            border-top: none;
+        }
+
+        .cap-score-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 11.5px;
+        }
+
+        .cap-score-table th,
+        .cap-score-table td {
+            border: 1px solid #ccc;
+            padding: 5px 4px;
+            text-align: center;
+        }
+
+        .cap-score-table thead th {
+            background: #e0e0e0;
+            font-weight: 700;
+        }
+
+        .cap-score-table tbody tr td {
+            height: 32px;
+        }
+
+        /* ── 강약점 영역 (레이더 차트 아래, 오른쪽에 병렬) ── */
+        .cap-lower {
+            border: 1px solid #aaa;
+            border-top: none;
+            display: flex;
+            min-height: 240px;
+        }
+
+        /* ⑧ 차트 영역: 하단에 단독 배치, 전체 폭 절반 */
+        .cap-chart-area {
+            flex: 1;
+            border-right: 1px solid #ccc;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            padding: 14px 10px;
+        }
+
+        .cap-legend {
+            margin-top: 8px;
+            font-size: 10px;
+            text-align: center;
+        }
+
+        .cap-legend span {
+            display: inline-flex;
+            align-items: center;
+            gap: 3px;
+            margin: 0 6px;
+        }
+
+        .leg-line {
+            display: inline-block;
+            width: 22px;
+            height: 2px;
+        }
+
+        /* 강약점 텍스트 영역 */
+        .cap-right {
+            width: 220px;
+            flex-shrink: 0;
+            padding: 14px 16px;
+            font-size: 12px;
+            line-height: 1.85;
+        }
+
+        .cap-right .str-title {
+            font-weight: 700;
+            font-size: 12.5px;
+            margin-bottom: 8px;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 5px;
+        }
+
+        .cap-right li {
+            margin-left: 14px;
+            margin-bottom: 8px;
+            color: #333;
+        }
+
+        /* ── 종합 의견 ── */
+        .opinion-header {
+            background: #222;
+            color: #fff;
+            text-align: center;
+            font-weight: 700;
+            font-size: 13px;
+            padding: 6px 0;
+            margin-top: 14px;
+            letter-spacing: 2px;
+        }
+
+        .opinion-body {
+            border: 1px solid #aaa;
+            border-top: none;
+            min-height: 90px;
+            padding: 12px 16px;
+            font-size: 12.5px;
+            line-height: 2;
+            color: #444;
+        }
+
+        /* ── 담당자 ── */
+        .sign-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            font-size: 12px;
+        }
+
+        .sign-table th,
+        .sign-table td {
+            border: 1px solid #888;
+            padding: 7px 10px;
+            text-align: center;
+        }
+
+        .sign-table th {
+            background: #f0f0f0;
+            font-weight: 700;
+        }
+
+        @media print {
+            body {
+                background: #fff;
+            }
+
+            .page {
+                margin: 0;
+                box-shadow: none;
+                padding: 24px 32px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <div class="page">
+
+        <!-- ═══════════════════════════════════════
+       [기업역량진단 결과서 예시]
+  ═══════════════════════════════════════ -->
+        <div class="report-title" style="margin-top:0; margin-bottom:16px;">기업진단 역량 결과서</div>
+        <div class="eval-box">
+            <div class="eval-title">기업 역량진단평가 결과</div>
+            <div class="eval-body">
+
+                <!-- 왼쪽: 기업평가 / 아이템평가 — flex 비율로 행수에 맞게 정렬 -->
+                <div class="eval-left">
+                    <!-- 기초역량 4행 높이 -->
+                    <div class="eval-cat eval-cat-company">기업<br>평가</div>
+                    <!-- 기술성3 + 사업성3 = 6행 높이 -->
+                    <div class="eval-cat eval-cat-item" style="border-top:1.5px solid #6894d0;">아이템<br>평가</div>
+                </div>
+
+                <!-- 가운데: 서브 카테고리 -->
+                <div class="eval-mid">
+                    <div class="eval-sub eval-sub-basic">
+                        기초역량
+                        <span class="bar"></span>
+                    </div>
+                    <div class="eval-sub eval-sub-tech" style="border-top:1.5px solid #6894d0;">
+                        기술성
+                        <span class="bar"></span>
+                    </div>
+                    <div class="eval-sub eval-sub-biz">
+                        사업성
+                        <span class="bar"></span>
+                    </div>
+                </div>
+
+                <!-- 오른쪽: 항목 텍스트 + 표시 -->
+                <div class="eval-items">
+                    <div class="eval-item-row"><span>·</span> 특허/지재권 <span class="dot dot-empty"
+                            style="margin-left:auto">○</span></div>
+                    <div class="eval-item-row"><span>·</span> 연구조직 <span class="dot dot-fill"
+                            style="margin-left:auto">●</span></div>
+                    <div class="eval-item-row"><span>·</span> 재무상태 <span class="dot dot-empty"
+                            style="margin-left:auto">○</span></div>
+                    <div class="eval-item-row"><span>·</span> 벤처/이노비즈 <span class="dot dot-empty"
+                            style="margin-left:auto">○</span></div>
+                    <div class="eval-item-row eval-section-border"><span>·</span> 인증 <span class="dot dot-empty"
+                            style="margin-left:auto">○</span></div>
+                    <div class="eval-item-row"><span>·</span> 제품화 수준 <span class="dot dot-half"
+                            style="margin-left:auto">◑</span></div>
+                    <div class="eval-item-row"><span>·</span> 생산역량 <span class="dot dot-half"
+                            style="margin-left:auto">◑</span></div>
+                    <div class="eval-item-row eval-section-border"><span>·</span> 매출/수요처 <span class="dot dot-fill"
+                            style="margin-left:auto">●</span></div>
+                    <div class="eval-item-row"><span>·</span> 실적(내수) <span class="dot dot-empty"
+                            style="margin-left:auto">○</span></div>
+                    <div class="eval-item-row"><span>·</span> 실적(수출) <span class="dot dot-empty"
+                            style="margin-left:auto">○</span></div>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- ─── 지원 항목 ─── -->
+        <div class="section-header" style="margin-top:16px;">지원 항목</div>
+        <table style="width:100%;border-collapse:collapse;font-size:12px;margin-bottom:28px;">
+            <thead>
+                <tr>
+                    <th
+                        style="background:#d9d9d9;border:1px solid #aaa;padding:5px 8px;text-align:center;font-weight:700;width:42px;">
+                        번호</th>
+                    <th
+                        style="background:#d9d9d9;border:1px solid #aaa;padding:5px 8px;text-align:center;font-weight:700;">
+                        항목</th>
+                    <th
+                        style="background:#d9d9d9;border:1px solid #aaa;padding:5px 8px;text-align:center;font-weight:700;width:90px;">
+                        등급</th>
+                    <th
+                        style="background:#d9d9d9;border:1px solid #aaa;padding:5px 8px;text-align:center;font-weight:700;width:70px;">
+                        해당여부</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">1</td>
+                    <td style="border:1px solid #ccc;padding:4px 10px;">중소기업</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;color:#f59e0b;">★</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">☐</td>
+                </tr>
+                <tr style="background:#f9fafb;">
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">2</td>
+                    <td style="border:1px solid #ccc;padding:4px 10px;">여성기업</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;color:#f59e0b;">★</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">☐</td>
+                </tr>
+                <tr>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">3</td>
+                    <td style="border:1px solid #ccc;padding:4px 10px;">장애인기업</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;color:#f59e0b;">★</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">☐</td>
+                </tr>
+                <tr style="background:#f9fafb;">
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">4</td>
+                    <td style="border:1px solid #ccc;padding:4px 10px;">협동조합</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;color:#f59e0b;">★</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">☐</td>
+                </tr>
+                <tr>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">5</td>
+                    <td style="border:1px solid #ccc;padding:4px 10px;">예비사회적기업</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;color:#f59e0b;">★★</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">☐</td>
+                </tr>
+                <tr style="background:#f9fafb;">
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">6</td>
+                    <td style="border:1px solid #ccc;padding:4px 10px;">소셜벤처</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;color:#f59e0b;">★★</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">☐</td>
+                </tr>
+                <tr>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">7</td>
+                    <td style="border:1px solid #ccc;padding:4px 10px;">창업기업</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;color:#f59e0b;">★★</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">☐</td>
+                </tr>
+                <tr style="background:#f9fafb;">
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">8</td>
+                    <td style="border:1px solid #ccc;padding:4px 10px;">성과공유기업</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;color:#f59e0b;">★★</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">☐</td>
+                </tr>
+                <tr>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">9</td>
+                    <td style="border:1px solid #ccc;padding:4px 10px;">벤처기업</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;color:#f59e0b;">★★★</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">☐</td>
+                </tr>
+                <tr style="background:#f9fafb;">
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">10</td>
+                    <td style="border:1px solid #ccc;padding:4px 10px;">이노비즈(기술)</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;color:#f59e0b;">★★</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">☐</td>
+                </tr>
+                <tr>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">11</td>
+                    <td style="border:1px solid #ccc;padding:4px 10px;">메인비즈(경영)</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;color:#f59e0b;">★★</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">☐</td>
+                </tr>
+                <tr style="background:#f9fafb;">
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">12</td>
+                    <td style="border:1px solid #ccc;padding:4px 10px;">녹색기업</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;color:#f59e0b;">★★★</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">☐</td>
+                </tr>
+                <tr>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">13</td>
+                    <td style="border:1px solid #ccc;padding:4px 10px;">사회적기업</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;color:#f59e0b;">★★★★</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">☐</td>
+                </tr>
+                <tr style="background:#f9fafb;">
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">14</td>
+                    <td style="border:1px solid #ccc;padding:4px 10px;">R&amp;D</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;color:#f59e0b;">★★★★</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">☐</td>
+                </tr>
+                <tr>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">15</td>
+                    <td style="border:1px solid #ccc;padding:4px 10px;">ESG관련인증</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;color:#f59e0b;">★★★</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">☐</td>
+                </tr>
+                <tr style="background:#f9fafb;">
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">16</td>
+                    <td style="border:1px solid #ccc;padding:4px 10px;">우수사회적기업</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;color:#f59e0b;">★★★★</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">☐</td>
+                </tr>
+                <tr>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">17</td>
+                    <td style="border:1px solid #ccc;padding:4px 10px;">혁신기업</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;color:#f59e0b;">★★★★</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">☐</td>
+                </tr>
+                <tr style="background:#f9fafb;">
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">18</td>
+                    <td style="border:1px solid #ccc;padding:4px 10px;">공공우수제품지정</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;color:#f59e0b;">★★★★★</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">☐</td>
+                </tr>
+                <tr>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">19</td>
+                    <td style="border:1px solid #ccc;padding:4px 10px;">강소기업</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;color:#f59e0b;">★★★★★</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">☐</td>
+                </tr>
+                <tr style="background:#f9fafb;">
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">20</td>
+                    <td style="border:1px solid #ccc;padding:4px 10px;">글로벌강소기업</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;color:#f59e0b;">★★★★★</td>
+                    <td style="border:1px solid #ccc;padding:4px 8px;text-align:center;">☐</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <!-- ═══════════════════════════════════════
+       기업경영 진단 보고서
+  ═══════════════════════════════════════ -->
+        <div class="report-title">기업경영 진단 보고서</div>
+
+        <!-- 기본 정보 -->
+        <table class="info-table">
+            <tr>
+                <th>기업명</th>
+                <td style="width:220px">&nbsp;</td>
+                <th>진단일</th>
+                <td>
+                    <label class="check-inline"><span class="check-box"></span>입주시</label>
+                    <label class="check-inline"><span class="check-box"></span>홍보시</label>
+                    &nbsp;<span style="color:#aaa">YY / MM / DD</span>
+                </td>
+            </tr>
+        </table>
+
+        <!-- 스케일업 유형 — "현황" 셀 제거, 선택 표시 열만 남김 -->
+        <table class="scaleup-table">
+            <tr>
+                <th rowspan="3">스케일업<br>유형</th>
+                <td class="su-empty-cell"></td>
+                <td class="su-type-cell su-growth">성장</td>
+                <td>현재 안정적인 성과를 바탕으로 사회적 목적을 달성하고 지속적으로 성장할 가능성이 있는 단계</td>
+            </tr>
+            <tr>
+                <td class="su-active-cell">▶</td>
+                <td class="su-type-cell su-leap">도약</td>
+                <td>지속가능성이 필요함으로 현재 성과 뿐 아니라 미래 성과를 위한 준비가 필요한 단계</td>
+            </tr>
+            <tr>
+                <td class="su-empty-cell"></td>
+                <td class="su-type-cell su-early">초기</td>
+                <td>지속가능성이 낮으므로 현재 비즈니스 모델, 전환, 성과달성에 대한 근본적인 점검이 필요한 단계</td>
+            </tr>
+        </table>
+
+        <!-- ── 지속가능성 ── -->
+        <div class="section-header">지속가능성</div>
+        <table class="score-table">
+            <thead>
+                <tr>
+                    <th class="group-header" colspan="2">성장잠재력</th>
+                    <th class="group-header" colspan="2">사회적 기업가정신</th>
+                    <th class="group-header" colspan="2">자본</th>
+                    <th class="group-header" colspan="2">기술</th>
+                    <th class="group-header" colspan="2">네트워크</th>
+                    <th class="group-header" colspan="2">사회적성과</th>
+                    <th class="group-header" colspan="2">경제적성과</th>
+                </tr>
+                <tr>
+                    <th>점수</th>
+                    <th>평균</th>
+                    <th>점수</th>
+                    <th>평균</th>
+                    <th>점수</th>
+                    <th>평균</th>
+                    <th>점수</th>
+                    <th>평균</th>
+                    <th>점수</th>
+                    <th>평균</th>
+                    <th>점수</th>
+                    <th>평균</th>
+                    <th>점수</th>
+                    <th>평균</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td class="score-val"></td>
+                    <td class="avg-val"></td>
+                    <td class="score-val"></td>
+                    <td class="avg-val"></td>
+                    <td class="score-val"></td>
+                    <td class="avg-val"></td>
+                    <td class="score-val"></td>
+                    <td class="avg-val"></td>
+                    <td class="score-val"></td>
+                    <td class="avg-val"></td>
+                    <td class="score-val"></td>
+                    <td class="avg-val"></td>
+                    <td class="score-val"></td>
+                    <td class="avg-val"></td>
+                </tr>
+            </tbody>
+        </table>
+        <div class="analysis-box">
+            <ul>
+                <li>전체적으로 보았을 때 지속가능성 중 <strong>( )</strong>이 가장 높고, <strong>( )</strong>이 가장 낮게 나타남</li>
+                <li>지속가능성 영역 중 <strong>( )</strong>이 가장 높고, <strong>( )</strong>이 가장 낮게 나타남</li>
+                <li>성과 영역에서는 <strong>( )</strong>가 더 높게 나타남</li>
+            </ul>
+        </div>
+
+        <!-- ── 역량 ── -->
+        <div class="section-header">역량</div>
+
+        <!-- 역량 점수표 (전체 폭) -->
+        <div class="cap-score-wrap">
+            <table class="cap-score-table">
+                <thead>
+                    <tr>
+                        <th colspan="2">사회문제/솔루션</th>
+                        <th colspan="2">아이템</th>
+                        <th colspan="2">비즈니스 모델</th>
+                        <th colspan="2">사업관리/운영</th>
+                        <th colspan="2">출점</th>
+                    </tr>
+                    <tr>
+                        <th>점수</th>
+                        <th>평균</th>
+                        <th>점수</th>
+                        <th>평균</th>
+                        <th>점수</th>
+                        <th>평균</th>
+                        <th>점수</th>
+                        <th>평균</th>
+                        <th>점수</th>
+                        <th>평균</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <tr>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                    </tr>
+                    <tr>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                        <td></td>
+                    </tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- 레이더 차트 + 강약점 — 하단에 나란히 배치 -->
+        <div class="cap-lower">
+            <!-- 레이더 차트 (하단 단독, 넓게) -->
+            <div class="cap-chart-area">
+                <canvas id="radarChart" width="280" height="240"></canvas>
+                <div class="cap-legend">
+                    <span><span class="leg-line" style="background:#c00000"></span>자가진단</span>
+                    <span><span class="leg-line" style="background:#4472c4"></span>멘토진단</span>
+                </div>
+            </div>
+            <!-- 강약점 텍스트 -->
+            <div class="cap-right">
+                <div class="str-title">강약점</div>
+                <ul>
+                    <li>전체적으로 보았을 때 <strong>( )</strong>이 가장 높고, <strong>( )</strong>이 가장 낮게 나타남</li>
+                    <li>사회문제/솔루션에서는 <strong>( )</strong>이 가장 높고, <strong>( )</strong>이 가장 낮게 나타남</li>
+                    <li>아이템에서는 <strong>( )</strong>이 가장 높고, <strong>( )</strong>이 가장 낮게 나타남</li>
+                    <li>비즈니스 모델에서는 <strong>( )</strong>이 가장 높고, <strong>( )</strong>이 가장 낮게 나타남</li>
+                    <li>사업관리/운영에서는 <strong>( )</strong>이 가장 높고, <strong>( )</strong>이 가장 낮게 나타남</li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- ── 종합 의견 ── -->
+        <div class="opinion-header">종&nbsp;&nbsp;&nbsp;합&nbsp;&nbsp;&nbsp;의&nbsp;&nbsp;&nbsp;견</div>
+        <div class="opinion-body">&nbsp;</div>
+
+        <!-- ── 담당자 확인 ── -->
+        <table class="sign-table">
+            <tr>
+                <th>검토 담당자</th>
+                <th>검토일</th>
+                <th>승인자</th>
+                <th>승인일</th>
+            </tr>
+            <tr>
+                <td style="height:36px">&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+                <td>&nbsp;</td>
+            </tr>
+        </table>
+
+    </div><!-- /page -->
+
+    <script>
+        const ctx = document.getElementById('radarChart').getContext('2d');
+        new Chart(ctx, {
+            type: 'radar',
+            data: {
+                labels: ['사회적\n가치', '문제정의', '문제해결', '비즈니스\n목표', '미래가치', '현재가치', '수익창출', '목표고객', '전략'],
+                datasets: [
+                    {
+                        label: '자가진단',
+                        data: [5, 5, 5, 5, 5, 4, 4, 5, 4],
+                        borderColor: '#c00000',
+                        backgroundColor: 'rgba(192,0,0,.08)',
+                        borderWidth: 1.5, pointRadius: 2,
+                    },
+                    {
+                        label: '멘토진단',
+                        data: [4.5, 4.5, 4, 5, 4, 4.5, 4, 4.5, 4.5],
+                        borderColor: '#4472c4',
+                        backgroundColor: 'rgba(68,114,196,.08)',
+                        borderWidth: 1.5, pointRadius: 2,
+                    }
+                ]
+            },
+            options: {
+                responsive: false,
+                plugins: { legend: { display: false } },
+                scales: {
+                    r: {
+                        min: 0, max: 5,
+                        ticks: { stepSize: 1, font: { size: 9 } },
+                        pointLabels: { font: { size: 10 } },
+                        grid: { color: '#ddd' }
+                    }
+                }
+            }
+        });
+    </script>
+</body>
+
+</html>
